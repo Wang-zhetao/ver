@@ -33,6 +33,8 @@ enum ArchType {
 pub enum VersionType {
     Node,
     Rust,
+    Python,
+    Go,
 }
 
 impl std::fmt::Display for VersionType {
@@ -40,6 +42,8 @@ impl std::fmt::Display for VersionType {
         match self {
             VersionType::Node => write!(f, "Node.js"),
             VersionType::Rust => write!(f, "Rust"),
+            VersionType::Python => write!(f, "Python"),
+            VersionType::Go => write!(f, "Go"),
         }
     }
 }
@@ -446,6 +450,8 @@ impl VersionManager {
         let version_file = match version_type {
             VersionType::Node => current_dir.join(".node-version"),
             VersionType::Rust => current_dir.join(".rust-version"),
+            VersionType::Python => current_dir.join(".python-version"),
+            VersionType::Go => current_dir.join(".go-version"),
         };
         
         fs::write(version_file, version)?;
@@ -470,6 +476,8 @@ impl VersionManager {
         let version_file = match version_type {
             VersionType::Node => current_dir.join(".node-version"),
             VersionType::Rust => current_dir.join(".rust-version"),
+            VersionType::Python => current_dir.join(".python-version"),
+            VersionType::Go => current_dir.join(".go-version"),
         };
         
         if version_file.exists() {
@@ -510,6 +518,8 @@ impl VersionManager {
         let bin_path = match version_type {
             VersionType::Node => version_dir.join(format!("node-v{}-{}/bin", version, self.get_os_arch_suffix())),
             VersionType::Rust => version_dir.join("bin"),
+            VersionType::Python => version_dir.join("bin"),
+            VersionType::Go => version_dir.join("bin"),
         };
         
         // 将该目录添加到 PATH 环境变量
@@ -796,8 +806,8 @@ impl VersionManager {
                 
                 // 按版本号排序（从新到旧）
                 versions.sort_by(|a, b| {
-                    let a_parts: Vec<&str> = a.version.split('.').collect();
-                    let b_parts: Vec<&str> = b.version.split('.').collect();
+                    let a_parts: Vec<&str> = a.version.trim_start_matches('v').split('.').collect();
+                    let b_parts: Vec<&str> = b.version.trim_start_matches('v').split('.').collect();
                     
                     for i in 0..std::cmp::min(a_parts.len(), b_parts.len()) {
                         let a_num = a_parts[i].parse::<i32>().unwrap_or(0);
@@ -823,41 +833,158 @@ impl VersionManager {
                     .text()
                     .await?;
                 
-                // 解析Rust版本信息
+                // 简单解析TOML获取版本号
                 let mut versions = Vec::new();
-                if let Some(version_line) = response.lines().find(|line| line.starts_with("version = ")) {
-                    if let Some(version) = version_line.split('"').nth(1) {
-                        // 创建一个NodeVersion对象以保持API一致性
-                        versions.push(NodeVersion {
-                            version: version.to_string(),
-                            lts: false, // Rust没有LTS概念
-                            date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-                            files: vec![], // 不需要文件列表
-                        });
+                let mut version = String::new();
+                
+                for line in response.lines() {
+                    if line.starts_with("version = ") {
+                        if let Some(v) = line.split('"').nth(1) {
+                            version = v.to_string();
+                            break;
+                        }
                     }
                 }
                 
-                // 获取更多历史版本
+                if !version.is_empty() {
+                    versions.push(NodeVersion {
+                        version: version.clone(),
+                        lts: true,
+                        date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+                        files: vec![],
+                    });
+                }
+                
+                // 获取其他版本
+                if !lts_only {
+                    let response = client
+                        .get("https://static.rust-lang.org/dist/")
+                        .send()
+                        .await?
+                        .text()
+                        .await?;
+                    
+                    // 简单解析HTML获取版本号
+                    for line in response.lines() {
+                        if line.contains("rust-") && line.contains(".tar.gz") && !line.contains("beta") && !line.contains("nightly") {
+                            if let Some(start) = line.find("rust-") {
+                                if let Some(end) = line[start..].find(".tar.gz") {
+                                    let v = &line[start + 5..start + end];
+                                    if v.contains('-') {
+                                        continue; // 跳过带有平台信息的文件
+                                    }
+                                    
+                                    if !versions.iter().any(|existing: &NodeVersion| existing.version == v) {
+                                        versions.push(NodeVersion {
+                                            version: v.to_string(),
+                                            lts: false,
+                                            date: "".to_string(),
+                                            files: vec![],
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 按版本号排序
+                versions.sort_by(|a, b| {
+                    let a_parts: Vec<&str> = a.version.split('.').collect();
+                    let b_parts: Vec<&str> = b.version.split('.').collect();
+                    
+                    for i in 0..std::cmp::min(a_parts.len(), b_parts.len()) {
+                        let a_num = a_parts[i].parse::<i32>().unwrap_or(0);
+                        let b_num = b_parts[i].parse::<i32>().unwrap_or(0);
+                        
+                        if a_num != b_num {
+                            return b_num.cmp(&a_num); // 从新到旧排序
+                        }
+                    }
+                    
+                    b_parts.len().cmp(&a_parts.len())
+                });
+                
+                Ok(versions)
+            },
+            VersionType::Python => {
+                // 获取Python版本列表
+                let client = reqwest::Client::new();
                 let response = client
-                    .get("https://static.rust-lang.org/dist/index.html")
+                    .get("https://www.python.org/ftp/python/")
                     .send()
                     .await?
                     .text()
                     .await?;
                 
                 // 简单解析HTML获取版本号
+                let mut versions = Vec::new();
                 for line in response.lines() {
-                    if line.contains("rust-") && line.contains(".tar.gz") && !line.contains("nightly") {
-                        if let Some(start) = line.find("rust-") {
-                            if let Some(end) = line[start..].find(".tar.gz") {
-                                let version = &line[start + 5..start + end];
-                                if !versions.iter().any(|v| v.version == version) && !version.contains("beta") {
-                                    versions.push(NodeVersion {
-                                        version: version.to_string(),
-                                        lts: false,
-                                        date: "".to_string(),
-                                        files: vec![],
-                                    });
+                    if line.contains("href=\"") && line.contains("/\"") {
+                        if let Some(start) = line.find("href=\"") {
+                            if let Some(end) = line[start + 6..].find("\"") {
+                                let version = &line[start + 6..start + 6 + end];
+                                if version.ends_with('/') && version.chars().any(|c| c.is_digit(10)) {
+                                    let version = version.trim_end_matches('/');
+                                    if !versions.iter().any(|existing: &NodeVersion| existing.version == version) {
+                                        versions.push(NodeVersion {
+                                            version: version.to_string(),
+                                            lts: false,
+                                            date: "".to_string(),
+                                            files: vec![],
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 按版本号排序
+                versions.sort_by(|a, b| {
+                    let a_parts: Vec<&str> = a.version.split('.').collect();
+                    let b_parts: Vec<&str> = b.version.split('.').collect();
+                    
+                    for i in 0..std::cmp::min(a_parts.len(), b_parts.len()) {
+                        let a_num = a_parts[i].parse::<i32>().unwrap_or(0);
+                        let b_num = b_parts[i].parse::<i32>().unwrap_or(0);
+                        
+                        if a_num != b_num {
+                            return b_num.cmp(&a_num); // 从新到旧排序
+                        }
+                    }
+                    
+                    b_parts.len().cmp(&a_parts.len())
+                });
+                
+                Ok(versions)
+            },
+            VersionType::Go => {
+                // 获取Go版本列表
+                let client = reqwest::Client::new();
+                let response = client
+                    .get("https://golang.org/dl/")
+                    .send()
+                    .await?
+                    .text()
+                    .await?;
+                
+                // 简单解析HTML获取版本号
+                let mut versions = Vec::new();
+                for line in response.lines() {
+                    if line.contains("go") && line.contains("toggleVisible") {
+                        if let Some(start) = line.find("go") {
+                            if let Some(end) = line[start..].find(" ") {
+                                let version = &line[start + 2..start + end];
+                                if version.chars().any(|c| c.is_digit(10)) && !version.contains("beta") && !version.contains("rc") {
+                                    if !versions.iter().any(|existing: &NodeVersion| existing.version == version) {
+                                        versions.push(NodeVersion {
+                                            version: version.to_string(),
+                                            lts: false,
+                                            date: "".to_string(),
+                                            files: vec![],
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -968,6 +1095,30 @@ impl VersionManager {
                     (OsType::Windows, ArchType::X86) => "i686-pc-windows-msvc",
                     _ => "unknown",
                 }.to_string()
+            },
+            VersionType::Python => {
+                match (&self.os_type, &self.arch_type) {
+                    (OsType::Darwin, ArchType::X64) => "macosx10.9.x86_64",
+                    (OsType::Darwin, ArchType::Arm64) => "macos11.0.arm64",
+                    (OsType::Linux, ArchType::X64) => "x86_64",
+                    (OsType::Linux, ArchType::Arm64) => "aarch64",
+                    (OsType::Linux, ArchType::Arm) => "armv7l",
+                    (OsType::Windows, ArchType::X64) => "amd64",
+                    (OsType::Windows, ArchType::X86) => "win32",
+                    _ => "unknown",
+                }.to_string()
+            },
+            VersionType::Go => {
+                match (&self.os_type, &self.arch_type) {
+                    (OsType::Darwin, ArchType::X64) => "darwin-amd64",
+                    (OsType::Darwin, ArchType::Arm64) => "darwin-arm64",
+                    (OsType::Linux, ArchType::X64) => "linux-amd64",
+                    (OsType::Linux, ArchType::Arm64) => "linux-arm64",
+                    (OsType::Linux, ArchType::Arm) => "linux-armv6l",
+                    (OsType::Windows, ArchType::X64) => "windows-amd64",
+                    (OsType::Windows, ArchType::X86) => "windows-386",
+                    _ => "unknown",
+                }.to_string()
             }
         };
         
@@ -984,6 +1135,14 @@ impl VersionManager {
             VersionType::Rust => format!(
                 "https://static.rust-lang.org/dist/rust-{}-{}{}",
                 version, os_arch_suffix, extension
+            ),
+            VersionType::Python => format!(
+                "https://www.python.org/ftp/python/{}/Python-{}-{}.tar.xz",
+                version, version, os_arch_suffix
+            ),
+            VersionType::Go => format!(
+                "https://golang.org/dl/go{}.{}",
+                version, os_arch_suffix
             ),
         };
 
@@ -1138,11 +1297,63 @@ impl VersionManager {
             }
         }
         
+        // 特殊处理Python安装
+        if version_type == VersionType::Python {
+            // 手动设置bin目录
+            let bin_dir = version_dir.join("bin");
+            fs::create_dir_all(&bin_dir)?;
+            
+            // 查找并移动可执行文件
+            let python_bin_dir = match self.os_type {
+                OsType::Windows => version_dir.join(format!("Python-{}-{}/python.exe", version, os_arch_suffix)),
+                _ => version_dir.join(format!("Python-{}-{}/bin/python{}", version, os_arch_suffix, self.get_exe_extension())),
+            };
+            
+            if python_bin_dir.exists() {
+                let target_bin = bin_dir.join("python");
+                fs::copy(python_bin_dir, &target_bin)?;
+                
+                // 设置执行权限
+                if let OsType::Darwin | OsType::Linux = self.os_type {
+                    let mut perms = fs::metadata(&target_bin)?.permissions();
+                    perms.set_mode(0o755); // rwxr-xr-x
+                    fs::set_permissions(&target_bin, perms)?;
+                }
+            }
+        }
+        
+        // 特殊处理Go安装
+        if version_type == VersionType::Go {
+            // 手动设置bin目录
+            let bin_dir = version_dir.join("bin");
+            fs::create_dir_all(&bin_dir)?;
+            
+            // 查找并移动可执行文件
+            let go_bin_dir = match self.os_type {
+                OsType::Windows => version_dir.join(format!("go{}-{}.exe", version, os_arch_suffix)),
+                _ => version_dir.join(format!("go{}-{}{}", version, os_arch_suffix, self.get_exe_extension())),
+            };
+            
+            if go_bin_dir.exists() {
+                let target_bin = bin_dir.join("go");
+                fs::copy(go_bin_dir, &target_bin)?;
+                
+                // 设置执行权限
+                if let OsType::Darwin | OsType::Linux = self.os_type {
+                    let mut perms = fs::metadata(&target_bin)?.permissions();
+                    perms.set_mode(0o755); // rwxr-xr-x
+                    fs::set_permissions(&target_bin, perms)?;
+                }
+            }
+        }
+        
         // Set executable permissions for binaries on Unix-like systems
         if let OsType::Darwin | OsType::Linux = self.os_type {
             let bin_dir = match version_type {
                 VersionType::Node => version_dir.join(format!("node-v{}-{}/bin", version, os_arch_suffix)),
                 VersionType::Rust => version_dir.join("bin"),
+                VersionType::Python => version_dir.join("bin"),
+                VersionType::Go => version_dir.join("bin"),
             };
             if bin_dir.exists() {
                 for entry in fs::read_dir(bin_dir)? {
@@ -1204,12 +1415,38 @@ impl VersionManager {
                     (OsType::Windows, ArchType::X86) => "i686-pc-windows-msvc",
                     _ => "unknown",
                 }.to_string()
+            },
+            VersionType::Python => {
+                match (&self.os_type, &self.arch_type) {
+                    (OsType::Darwin, ArchType::X64) => "macosx10.9.x86_64",
+                    (OsType::Darwin, ArchType::Arm64) => "macos11.0.arm64",
+                    (OsType::Linux, ArchType::X64) => "x86_64",
+                    (OsType::Linux, ArchType::Arm64) => "aarch64",
+                    (OsType::Linux, ArchType::Arm) => "armv7l",
+                    (OsType::Windows, ArchType::X64) => "amd64",
+                    (OsType::Windows, ArchType::X86) => "win32",
+                    _ => "unknown",
+                }.to_string()
+            },
+            VersionType::Go => {
+                match (&self.os_type, &self.arch_type) {
+                    (OsType::Darwin, ArchType::X64) => "darwin-amd64",
+                    (OsType::Darwin, ArchType::Arm64) => "darwin-arm64",
+                    (OsType::Linux, ArchType::X64) => "linux-amd64",
+                    (OsType::Linux, ArchType::Arm64) => "linux-arm64",
+                    (OsType::Linux, ArchType::Arm) => "linux-armv6l",
+                    (OsType::Windows, ArchType::X64) => "windows-amd64",
+                    (OsType::Windows, ArchType::X86) => "windows-386",
+                    _ => "unknown",
+                }.to_string()
             }
         };
         
         let bin_dir = match version_type {
             VersionType::Node => version_dir.join(format!("node-v{}-{}/bin", version, os_arch_suffix)),
             VersionType::Rust => version_dir.join("bin"),
+            VersionType::Python => version_dir.join("bin"),
+            VersionType::Go => version_dir.join("bin"),
         };
         
         // Create symlinks for all binaries in that directory
@@ -1229,6 +1466,14 @@ impl VersionManager {
                                     version, version, os_arch_suffix, file_name.to_string_lossy(), self.get_exe_extension()
                                 ),
                                 VersionType::Rust => format!(
+                                    "@echo off\r\n\"%~dp0\\..\\versions\\{}\\bin\\{}{}\" %*\r\n",
+                                    version, file_name.to_string_lossy(), self.get_exe_extension()
+                                ),
+                                VersionType::Python => format!(
+                                    "@echo off\r\n\"%~dp0\\..\\versions\\{}\\bin\\{}{}\" %*\r\n",
+                                    version, file_name.to_string_lossy(), self.get_exe_extension()
+                                ),
+                                VersionType::Go => format!(
                                     "@echo off\r\n\"%~dp0\\..\\versions\\{}\\bin\\{}{}\" %*\r\n",
                                     version, file_name.to_string_lossy(), self.get_exe_extension()
                                 ),
@@ -1273,18 +1518,23 @@ impl VersionManager {
         let mut versions = Vec::new();
         for entry in fs::read_dir(&self.versions_dir)? {
             let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                let version = entry.file_name().to_string_lossy().to_string();
-                if let Some(current) = &self.current_version {
-                    if &version == current {
-                        versions.push(format!("{} (current)", version));
-                        continue;
-                    }
+            if entry.path().is_dir() {
+                if let Some(name) = entry.file_name().to_str() {
+                    versions.push(name.to_string());
                 }
-                versions.push(version);
             }
         }
-        versions.sort();
+        
+        // 检查当前版本
+        if let Some(current) = &self.current_version {
+            for i in 0..versions.len() {
+                if &versions[i] == current {
+                    versions[i] = format!("{} (current)", versions[i]);
+                    break;
+                }
+            }
+        }
+        
         Ok(versions)
     }
 
@@ -1334,6 +1584,8 @@ impl VersionManager {
         match version_type {
             VersionType::Node => self.versions_dir.join(version),
             VersionType::Rust => self.versions_dir.join(version),
+            VersionType::Python => self.versions_dir.join(version),
+            VersionType::Go => self.versions_dir.join(version),
         }
     }
 
@@ -1569,7 +1821,274 @@ impl VersionManager {
     /// # 返回
     ///
     /// 成功时返回迁移的版本数量，失败时返回错误。
+    #[allow(dead_code)]
     pub async fn migrate_from_rustup(&self) -> Result<usize> {
         self.migrate_from("rustup", VersionType::Rust).await
+    }
+
+    /// 获取可用的 Python 版本列表
+    pub async fn list_available_python_versions(&self, stable_only: bool) -> Result<Vec<String>> {
+        let versions = self.list_available_versions(false, VersionType::Python).await?;
+        let mut result = Vec::new();
+        
+        for version in versions {
+            // 如果只需要稳定版本，则跳过包含 alpha、beta、rc 的版本
+            if stable_only && (version.version.contains("alpha") || 
+                              version.version.contains("beta") || 
+                              version.version.contains("rc")) {
+                continue;
+            }
+            result.push(version.version);
+        }
+        
+        Ok(result)
+    }
+    
+    /// 安装指定的 Python 版本
+    pub async fn install_python_version(&self, version: &str) -> Result<()> {
+        // 直接使用版本字符串，不需要解析
+        self.install_version(version, VersionType::Python).await?;
+        Ok(())
+    }
+    
+    /// 使用指定的 Python 版本
+    pub fn use_python_version(&mut self, version: &str) -> Result<()> {
+        self.use_version(version, VersionType::Python)
+    }
+    
+    /// 获取当前使用的 Python 版本
+    pub fn get_current_python_version(&self) -> Option<String> {
+        self.get_current_version(VersionType::Python).cloned()
+    }
+    
+    /// 列出已安装的 Python 版本
+    pub fn list_installed_python_versions(&self) -> Result<Vec<String>> {
+        self.list_installed_versions(VersionType::Python)
+    }
+    
+    /// 删除指定的 Python 版本
+    pub fn remove_python_version(&self, version: &str) -> Result<()> {
+        self.remove_version(version, VersionType::Python)
+    }
+    
+    /// 创建 Python 版本别名
+    pub fn create_python_alias(&self, name: &str, version: &str) -> Result<()> {
+        self.create_alias(name, version, VersionType::Python)
+    }
+    
+    /// 获取 Python 版本别名对应的实际版本
+    pub fn get_python_alias(&self, alias: &str) -> Result<Option<String>> {
+        self.get_alias(alias, VersionType::Python)
+    }
+    
+    /// 列出所有 Python 版本别名
+    pub fn list_python_aliases(&self) -> Result<Vec<(String, String)>> {
+        self.list_aliases(VersionType::Python)
+    }
+    
+    /// 设置当前目录的 Python 版本
+    pub fn set_local_python_version(&self, version: &str) -> Result<()> {
+        self.set_local_version(version, VersionType::Python)
+    }
+    
+    /// 使用指定的 Python 版本执行命令
+    pub fn exec_with_python_version(&self, version: &str, command: &str, args: &[String]) -> Result<()> {
+        self.exec_with_version(version, command, args, VersionType::Python)
+    }
+    
+    /// 从 pyenv 迁移 Python 版本
+    pub async fn migrate_from_pyenv(&self) -> Result<usize> {
+        let pyenv_versions_dir = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+            .join(".pyenv")
+            .join("versions");
+        
+        if !pyenv_versions_dir.exists() {
+            return Ok(0);
+        }
+        
+        let mut count = 0;
+        for entry in fs::read_dir(pyenv_versions_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            
+            if path.is_dir() {
+                if let Some(version_str) = path.file_name().and_then(|n| n.to_str()) {
+                    // 跳过非版本目录
+                    if version_str.starts_with(".") {
+                        continue;
+                    }
+                    
+                    // 复制版本目录
+                    let target_dir = self.versions_dir.join(version_str);
+                    if !target_dir.exists() {
+                        fs::create_dir_all(&target_dir)?;
+                        
+                        // 复制 bin 目录
+                        let bin_dir = path.join("bin");
+                        if bin_dir.exists() {
+                            let target_bin_dir = target_dir.join("bin");
+                            fs::create_dir_all(&target_bin_dir)?;
+                            
+                            for bin_entry in fs::read_dir(bin_dir)? {
+                                let bin_entry = bin_entry?;
+                                let bin_path = bin_entry.path();
+                                
+                                if bin_path.is_file() {
+                                    let file_name = bin_path.file_name().unwrap();
+                                    let target_bin_path = target_bin_dir.join(file_name);
+                                    fs::copy(&bin_path, &target_bin_path)?;
+                                    
+                                    // 设置执行权限
+                                    if let OsType::Darwin | OsType::Linux = self.os_type {
+                                        let mut perms = fs::metadata(&target_bin_path)?.permissions();
+                                        perms.set_mode(0o755); // rwxr-xr-x
+                                        fs::set_permissions(&target_bin_path, perms)?;
+                                    }
+                                }
+                            }
+                            
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(count)
+    }
+    
+    /// 获取可用的 Go 版本列表
+    pub async fn list_available_go_versions(&self, stable_only: bool) -> Result<Vec<String>> {
+        let versions = self.list_available_versions(false, VersionType::Go).await?;
+        let mut result = Vec::new();
+        
+        for version in versions {
+            // 如果只需要稳定版本，则跳过包含 beta、rc 的版本
+            if stable_only && (version.version.contains("beta") || 
+                              version.version.contains("rc")) {
+                continue;
+            }
+            result.push(version.version);
+        }
+        
+        Ok(result)
+    }
+    
+    /// 安装指定的 Go 版本
+    pub async fn install_go_version(&self, version: &str) -> Result<()> {
+        // 直接使用版本字符串，不需要解析
+        self.install_version(version, VersionType::Go).await?;
+        Ok(())
+    }
+    
+    /// 使用指定的 Go 版本
+    pub fn use_go_version(&mut self, version: &str) -> Result<()> {
+        self.use_version(version, VersionType::Go)
+    }
+    
+    /// 获取当前使用的 Go 版本
+    pub fn get_current_go_version(&self) -> Option<String> {
+        self.get_current_version(VersionType::Go).cloned()
+    }
+    
+    /// 列出已安装的 Go 版本
+    pub fn list_installed_go_versions(&self) -> Result<Vec<String>> {
+        self.list_installed_versions(VersionType::Go)
+    }
+    
+    /// 删除指定的 Go 版本
+    pub fn remove_go_version(&self, version: &str) -> Result<()> {
+        self.remove_version(version, VersionType::Go)
+    }
+    
+    /// 创建 Go 版本别名
+    pub fn create_go_alias(&self, name: &str, version: &str) -> Result<()> {
+        self.create_alias(name, version, VersionType::Go)
+    }
+    
+    /// 获取 Go 版本别名对应的实际版本
+    pub fn get_go_alias(&self, alias: &str) -> Result<Option<String>> {
+        self.get_alias(alias, VersionType::Go)
+    }
+    
+    /// 列出所有 Go 版本别名
+    pub fn list_go_aliases(&self) -> Result<Vec<(String, String)>> {
+        self.list_aliases(VersionType::Go)
+    }
+    
+    /// 设置当前目录的 Go 版本
+    pub fn set_local_go_version(&self, version: &str) -> Result<()> {
+        self.set_local_version(version, VersionType::Go)
+    }
+    
+    /// 使用指定的 Go 版本执行命令
+    pub fn exec_with_go_version(&self, version: &str, command: &str, args: &[String]) -> Result<()> {
+        self.exec_with_version(version, command, args, VersionType::Go)
+    }
+    
+    /// 从 gvm 迁移 Go 版本
+    pub async fn migrate_from_gvm(&self) -> Result<usize> {
+        let gvm_versions_dir = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+            .join(".gvm")
+            .join("gos");
+        
+        if !gvm_versions_dir.exists() {
+            return Ok(0);
+        }
+        
+        let mut count = 0;
+        for entry in fs::read_dir(gvm_versions_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            
+            if path.is_dir() {
+                if let Some(version_str) = path.file_name().and_then(|n| n.to_str()) {
+                    // 跳过非版本目录
+                    if !version_str.starts_with("go") {
+                        continue;
+                    }
+                    
+                    // 提取版本号
+                    let version = &version_str[2..]; // 去掉 "go" 前缀
+                    
+                    // 复制版本目录
+                    let target_dir = self.versions_dir.join(version);
+                    if !target_dir.exists() {
+                        fs::create_dir_all(&target_dir)?;
+                        
+                        // 复制 bin 目录
+                        let bin_dir = path.join("bin");
+                        if bin_dir.exists() {
+                            let target_bin_dir = target_dir.join("bin");
+                            fs::create_dir_all(&target_bin_dir)?;
+                            
+                            for bin_entry in fs::read_dir(bin_dir)? {
+                                let bin_entry = bin_entry?;
+                                let bin_path = bin_entry.path();
+                                
+                                if bin_path.is_file() {
+                                    let file_name = bin_path.file_name().unwrap();
+                                    let target_bin_path = target_bin_dir.join(file_name);
+                                    fs::copy(&bin_path, &target_bin_path)?;
+                                    
+                                    // 设置执行权限
+                                    if let OsType::Darwin | OsType::Linux = self.os_type {
+                                        let mut perms = fs::metadata(&target_bin_path)?.permissions();
+                                        perms.set_mode(0o755); // rwxr-xr-x
+                                        fs::set_permissions(&target_bin_path, perms)?;
+                                    }
+                                }
+                            }
+                            
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(count)
     }
 }

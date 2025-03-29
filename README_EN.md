@@ -1,12 +1,21 @@
 # Ver-dev - High-Performance Version Manager
 
-`ver-dev` is a fast, cross-platform version manager written in Rust that helps you easily manage multiple Node.js and Rust versions.
+`ver-dev` is a fast, cross-platform version manager written in Rust that helps you easily manage multiple Node.js, Rust, Python, and Go versions.
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
+- 🚀 **High Performance**: Written in Rust for speed and low resource usage
+- 🔄 **Multi-language Support**: Manage Node.js, Rust, Python, and Go versions
+- 🌈 **Colored Output**: Intuitive colored terminal output to distinguish different languages
+- 🔄 **Version Switching**: Quickly switch between different versions
+- 📦 **Simple Installation**: No extra dependencies, one-command installation
+- 🔌 **Cross-Platform**: Support for macOS, Linux, and Windows
+- 🏷️ **Version Aliases**: Create aliases for commonly used versions
+- 📂 **Project-Specific Versions**: Set different versions for different projects
+- 🔄 **Migration Tools**: Migrate from other version managers (nvm, rustup, pyenv, gvm)
 - 🚀 **High Performance** - Written in Rust for blazing-fast speed
 - 🔄 **Easy Switching** - Seamlessly switch between versions
 - 🌐 **Cross-Platform** - Works on macOS, Linux, and Windows
@@ -115,6 +124,90 @@ ver-dev rust installed
 ver-dev rust remove 1.85.0
 ```
 
+### Python Version Management
+
+```bash
+# List available Python versions
+ver-dev python list
+ver-dev python list --stable  # Show only stable versions
+
+# Install a specific Python version
+ver-dev python install 3.12.0
+
+# Install the latest version
+ver-dev python install latest
+ver-dev python install stable  # Install latest stable version
+
+# Switch to a Python version
+ver-dev python use 3.12.0
+
+# View current Python version
+ver-dev python current
+
+# List installed Python versions
+ver-dev python installed
+
+# Remove a specific Python version
+ver-dev python remove 3.12.0
+
+# Create a Python alias
+ver-dev python alias myproject 3.12.0
+
+# Switch using an alias
+ver-dev python use myproject
+
+# List all Python aliases
+ver-dev python aliases
+
+# Set a specific Python version for the current project
+ver-dev python local 3.12.0
+
+# Migrate from pyenv
+ver-dev python migrate pyenv
+```
+
+### Go Version Management
+
+```bash
+# List available Go versions
+ver-dev go list
+ver-dev go list --stable  # Show only stable versions
+
+# Install a specific Go version
+ver-dev go install 1.22.0
+
+# Install the latest version
+ver-dev go install latest
+ver-dev go install stable  # Install latest stable version
+
+# Switch to a Go version
+ver-dev go use 1.22.0
+
+# View current Go version
+ver-dev go current
+
+# List installed Go versions
+ver-dev go installed
+
+# Remove a specific Go version
+ver-dev go remove 1.22.0
+
+# Create a Go alias
+ver-dev go alias myproject 1.22.0
+
+# Switch using an alias
+ver-dev go use myproject
+
+# List all Go aliases
+ver-dev go aliases
+
+# Set a specific Go version for the current project
+ver-dev go local 1.22.0
+
+# Migrate from gvm
+ver-dev go migrate gvm
+```
+
 ### Version Aliases
 
 ```bash
@@ -181,13 +274,14 @@ ver-dev selfupdate
 
 ## Colored Terminal Output
 
-To enhance user experience, `ver` uses colored output to distinguish between different types of versions:
+To improve readability and user experience, ver-dev uses colored terminal output to distinguish between different languages and version information:
 
-- **Node.js versions**: Displayed in **green**
-- **Rust versions**: Displayed in **yellow**
-- **Currently active versions**: Highlighted in **bold**
+- **Node.js**: Green
+- **Rust**: Yellow
+- **Python**: Blue
+- **Go**: Red
 
-This makes it easier to distinguish between different version types and states in the terminal.
+Current versions and important information are displayed in bold, making it easier to identify key information.
 
 ## Supported Platforms
 
