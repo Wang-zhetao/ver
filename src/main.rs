@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use colored::*;
 mod version_manager;
 use version_manager::{VersionManager, VersionType};
 
@@ -181,41 +182,98 @@ async fn main() -> Result<()> {
         Commands::List { lts, type_ } => {
             let version_type = parse_version_type(&type_)?;
             let versions = manager.list_available_versions(lts, version_type).await?;
+            
+            // 添加版本类型标题
+            match version_type {
+                VersionType::Node => println!("{}", "Available Node.js Versions:".green().bold()),
+                VersionType::Rust => println!("{}", "Available Rust Versions:".yellow().bold()),
+            }
+            
             for version in versions {
-                println!("{} {}", version.version, if version.lts { "(LTS)" } else { "" });
+                let version_str = match version_type {
+                    VersionType::Node => {
+                        if version.lts {
+                            format!("{} (LTS)", version.version).green()
+                        } else {
+                            version.version.green()
+                        }
+                    },
+                    VersionType::Rust => {
+                        if version.lts {
+                            format!("{} (Stable)", version.version).yellow()
+                        } else {
+                            version.version.yellow()
+                        }
+                    },
+                };
+                println!("{}", version_str);
             }
         }
         Commands::Install { version, type_ } => {
             let version_type = parse_version_type(&type_)?;
+            let type_color = match version_type {
+                VersionType::Node => "Node.js".green().bold(),
+                VersionType::Rust => "Rust".yellow().bold(),
+            };
+            
             if version == "latest" {
-                println!("Installing latest {} version...", version_type);
+                println!("Installing latest {} version...", type_color);
                 manager.install_latest(version_type).await?;
             } else if version == "lts" && version_type == VersionType::Node {
-                println!("Installing latest LTS Node.js version...");
+                println!("Installing latest LTS {} version...", type_color);
                 manager.install_latest_lts(version_type).await?;
             } else {
+                println!("Installing {} version {}...", type_color, version.bold());
                 manager.install_version(&version, version_type).await?;
             }
         }
         Commands::Use { version, type_ } => {
             let version_type = parse_version_type(&type_)?;
-            // Check if version is an alias
-            if let Some(aliased_version) = manager.get_alias(&version, version_type)? {
-                println!("Using alias '{}' -> {} version {}", version, version_type, aliased_version);
-                manager.use_version(&aliased_version, version_type)?;
-            } else {
-                manager.use_version(&version, version_type)?;
-            }
+            let type_color = match version_type {
+                VersionType::Node => "Node.js".green().bold(),
+                VersionType::Rust => "Rust".yellow().bold(),
+            };
+            
+            println!("Switching to {} version {}...", type_color, version.bold());
+            manager.use_version(&version, version_type)?;
         }
         Commands::Installed { type_ } => {
             let version_type = parse_version_type(&type_)?;
             let versions = manager.list_installed_versions(version_type)?;
+            
+            // 添加版本类型标题
+            match version_type {
+                VersionType::Node => println!("{}", "Installed Node.js Versions:".green().bold()),
+                VersionType::Rust => println!("{}", "Installed Rust Versions:".yellow().bold()),
+            }
+            
             if versions.is_empty() {
-                println!("No {} versions installed", version_type);
-            } else {
-                for version in versions {
-                    println!("{}", version);
-                }
+                println!("No {} versions installed", match version_type {
+                    VersionType::Node => "Node.js".green(),
+                    VersionType::Rust => "Rust".yellow(),
+                });
+                return Ok(());
+            }
+            
+            for version in versions {
+                let is_current = version.contains("(current)");
+                let version_str = match version_type {
+                    VersionType::Node => {
+                        if is_current {
+                            version.green().bold()
+                        } else {
+                            version.green()
+                        }
+                    },
+                    VersionType::Rust => {
+                        if is_current {
+                            version.yellow().bold()
+                        } else {
+                            version.yellow()
+                        }
+                    },
+                };
+                println!("{}", version_str);
             }
         }
         Commands::Remove { version, type_ } => {
@@ -225,23 +283,38 @@ async fn main() -> Result<()> {
         Commands::Current { type_ } => {
             let version_type = parse_version_type(&type_)?;
             if let Some(version) = manager.get_current_version(version_type) {
-                println!("Current {} version: {}", version_type, version);
+                println!("Current {} version: {}", match version_type {
+                    VersionType::Node => "Node.js".green().bold(),
+                    VersionType::Rust => "Rust".yellow().bold(),
+                }, version);
             } else {
-                println!("No active {} version", version_type);
+                println!("No active {} version", match version_type {
+                    VersionType::Node => "Node.js".green(),
+                    VersionType::Rust => "Rust".yellow(),
+                });
             }
         }
         Commands::Alias { name, version, type_ } => {
             let version_type = parse_version_type(&type_)?;
             manager.create_alias(&name, &version, version_type)?;
-            println!("Created alias '{}' -> {} version {}", name, version_type, version);
+            println!("Created alias '{}' -> {} version {}", name, match version_type {
+                VersionType::Node => "Node.js".green().bold(),
+                VersionType::Rust => "Rust".yellow().bold(),
+            }, version);
         }
         Commands::Aliases { type_ } => {
             let version_type = parse_version_type(&type_)?;
             let aliases = manager.list_aliases(version_type)?;
             if aliases.is_empty() {
-                println!("No aliases defined for {}", version_type);
+                println!("No aliases defined for {}", match version_type {
+                    VersionType::Node => "Node.js".green(),
+                    VersionType::Rust => "Rust".yellow(),
+                });
             } else {
-                println!("Defined aliases for {}:", version_type);
+                println!("Defined aliases for {}:", match version_type {
+                    VersionType::Node => "Node.js".green().bold(),
+                    VersionType::Rust => "Rust".yellow().bold(),
+                });
                 for (alias, version) in aliases {
                     println!("{} -> {}", alias, version);
                 }
@@ -250,7 +323,10 @@ async fn main() -> Result<()> {
         Commands::Local { version, type_ } => {
             let version_type = parse_version_type(&type_)?;
             manager.set_local_version(&version, version_type)?;
-            println!("Set local {} version to {} for the current directory", version_type, version);
+            println!("Set local {} version to {} for the current directory", match version_type {
+                VersionType::Node => "Node.js".green().bold(),
+                VersionType::Rust => "Rust".yellow().bold(),
+            }, version);
         }
         Commands::Exec { version, type_, args } => {
             let version_type = parse_version_type(&type_)?;
@@ -281,8 +357,13 @@ async fn main() -> Result<()> {
             match rust_command {
                 RustCommands::List { stable } => {
                     let versions = manager.list_available_rust_versions(stable).await?;
-                    for version in versions {
-                        println!("{}", version);
+                    if versions.is_empty() {
+                        println!("No Rust versions available");
+                    } else {
+                        println!("Available Rust Versions:");
+                        for version in versions {
+                            println!("{}", version);
+                        }
                     }
                 }
                 RustCommands::Install { version } => {
@@ -302,6 +383,7 @@ async fn main() -> Result<()> {
                     if versions.is_empty() {
                         println!("No Rust versions installed");
                     } else {
+                        println!("Installed Rust Versions:");
                         for version in versions {
                             println!("{}", version);
                         }

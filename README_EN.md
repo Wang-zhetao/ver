@@ -16,6 +16,7 @@
 - 📦 **One-Click Migration** - Migrate from other version managers (nvm, rustup)
 - 🔍 **Smart Environment Management** - Automatically handles environment variables and path settings
 - 🦀 **Multi-Language Support** - Manages both Node.js and Rust versions
+- 🎨 **Colored Terminal Output** - Visually distinguish Node.js (green) and Rust (yellow) versions
 
 ## Installation
 
@@ -34,6 +35,21 @@ cd ver
 
 # Build and install
 cargo install --path .
+```
+
+### Development Version Installation
+
+If you want to use the latest development version, you can create a symbolic link:
+
+```bash
+# Build the development version
+cargo b
+
+# Create a symbolic link to the ~/.cargo/bin directory
+ln -sf "$(pwd)/target/debug/ver" ~/.cargo/bin/ver-dev
+
+# Now you can use the ver-dev command
+ver-dev -h
 ```
 
 ### Pre-built Binaries
@@ -162,6 +178,16 @@ ver clean
 # Update ver itself
 ver selfupdate
 ```
+
+## Colored Terminal Output
+
+To enhance user experience, `ver` uses colored output to distinguish between different types of versions:
+
+- **Node.js versions**: Displayed in **green**
+- **Rust versions**: Displayed in **yellow**
+- **Currently active versions**: Highlighted in **bold**
+
+This makes it easier to distinguish between different version types and states in the terminal.
 
 ## Supported Platforms
 
