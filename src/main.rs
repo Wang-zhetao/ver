@@ -12,7 +12,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// List all available Node.js versions
+    /// List all available versions (Node.js or Rust)
     List {
         /// Show only LTS versions
         #[arg(short, long)]
@@ -22,7 +22,7 @@ enum Commands {
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// Install a specific Node.js version
+    /// Install a specific version (Node.js or Rust)
     Install {
         /// Version to install (e.g., 18.17.0, "latest", or "lts")
         version: String,
@@ -31,7 +31,7 @@ enum Commands {
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// Use a specific Node.js version
+    /// Use a specific version (Node.js or Rust)
     Use {
         /// Version to use (e.g., 18.17.0 or an alias)
         version: String,
@@ -40,13 +40,13 @@ enum Commands {
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// List installed Node.js versions
+    /// List installed versions (Node.js or Rust)
     Installed {
         /// Version type to list (node or rust)
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// Remove a specific Node.js version
+    /// Remove a specific version (Node.js or Rust)
     Remove {
         /// Version to remove (e.g., 18.17.0)
         version: String,
@@ -55,13 +55,13 @@ enum Commands {
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// Show current Node.js version
+    /// Show current version (Node.js or Rust)
     Current {
         /// Version type to show (node or rust)
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// Create an alias for a specific Node.js version
+    /// Create an alias for a specific version (Node.js or Rust)
     Alias {
         /// Alias name
         name: String,
@@ -72,13 +72,13 @@ enum Commands {
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// List all aliases
+    /// List all aliases (Node.js or Rust)
     Aliases {
         /// Version type for aliases (node or rust)
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// Set a local Node.js version for the current directory
+    /// Set a local version for the current directory (Node.js or Rust)
     Local {
         /// Version to set locally (e.g., 18.17.0)
         version: String,
@@ -87,7 +87,7 @@ enum Commands {
         #[arg(short, long, default_value = "node")]
         type_: String,
     },
-    /// Execute a command with a specific Node.js version
+    /// Execute a command with a specific version (Node.js or Rust)
     Exec {
         /// Version to use (e.g., 18.17.0)
         version: String,
@@ -104,9 +104,9 @@ enum Commands {
     Clean,
     /// Update the ver tool itself
     SelfUpdate,
-    /// Migrate from other version managers (nvm, n)
+    /// Migrate from other version managers (nvm, rustup)
     Migrate {
-        /// Source version manager (nvm, n)
+        /// Source version manager (nvm, rustup)
         source: String,
         
         /// Version type to migrate (node or rust)
@@ -114,7 +114,7 @@ enum Commands {
         type_: String,
     },
     
-    /// Rust version management commands
+    /// Rust version management commands (alternative syntax)
     #[command(subcommand)]
     Rust(RustCommands),
 }
