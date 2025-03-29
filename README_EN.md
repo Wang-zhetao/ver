@@ -1,6 +1,6 @@
-# Ver - High-Performance Version Manager
+# Ver-dev - High-Performance Version Manager
 
-`ver` is a fast, cross-platform version manager written in Rust that helps you easily manage multiple Node.js and Rust versions.
+`ver-dev` is a fast, cross-platform version manager written in Rust that helps you easily manage multiple Node.js and Rust versions.
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)

@@ -1,6 +1,6 @@
-# Ver - 高性能版本管理器
+# Ver-dev - 高性能版本管理器
 
-`ver` 是一个用 Rust 编写的快速、跨平台的版本管理工具，帮助你轻松管理多个 Node.js 和 Rust 版本。
+`ver-dev` 是一个用 Rust 编写的快速、跨平台的版本管理工具，帮助你轻松管理多个 Node.js 和 Rust 版本。
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -23,7 +23,7 @@
 ### 使用 Homebrew (macOS)
 
 ```bash
-brew install ver
+brew install ver-dev
 ```
 
 ### 从源码安装
@@ -62,85 +62,85 @@ ver-dev -h
 
 ```bash
 # 查看帮助
-ver --help
+ver-dev --help
 
 # 列出可用的 Node.js 版本
-ver list
-ver list --lts  # 仅显示 LTS 版本
+ver-dev list
+ver-dev list --lts  # 仅显示 LTS 版本
 
 # 安装特定版本
-ver install 18.17.0
+ver-dev install 18.17.0
 
 # 安装最新版本或最新 LTS 版本
-ver install latest
-ver install lts
+ver-dev install latest
+ver-dev install lts
 
 # 切换版本
-ver use 18.17.0
+ver-dev use 18.17.0
 
 # 查看当前使用的版本
-ver current
+ver-dev current
 
 # 列出已安装的版本
-ver installed
+ver-dev installed
 
 # 删除特定版本
-ver remove 18.17.0
+ver-dev remove 18.17.0
 ```
 
 ### Rust 版本管理
 
 ```bash
 # 列出可用的 Rust 版本
-ver rust list
-ver rust list --stable  # 仅显示稳定版本
+ver-dev rust list
+ver-dev rust list --stable  # 仅显示稳定版本
 
 # 安装特定 Rust 版本
-ver rust install 1.85.0
+ver-dev rust install 1.85.0
 
 # 安装最新版本
-ver rust install latest
-ver rust install stable  # 安装最新稳定版
+ver-dev rust install latest
+ver-dev rust install stable  # 安装最新稳定版
 
 # 切换 Rust 版本
-ver rust use 1.85.0
+ver-dev rust use 1.85.0
 
 # 查看当前使用的 Rust 版本
-ver rust current
+ver-dev rust current
 
 # 列出已安装的 Rust 版本
-ver rust installed
+ver-dev rust installed
 
 # 删除特定 Rust 版本
-ver rust remove 1.85.0
+ver-dev rust remove 1.85.0
 ```
 
 ### 版本别名
 
 ```bash
 # 创建 Node.js 别名
-ver alias myproject 18.17.0
+ver-dev alias myproject 18.17.0
 
 # 创建 Rust 别名
-ver rust alias myproject 1.85.0
+ver-dev rust alias myproject 1.85.0
 
 # 使用别名切换版本
-ver use myproject
-ver rust use myproject
+ver-dev use myproject
+ver-dev rust use myproject
 
 # 列出所有别名
-ver aliases
-ver rust aliases
+ver-dev aliases
+ver-dev rust aliases
 ```
 
 ### 项目特定版本
 
 ```bash
 # 为当前项目设置特定 Node.js 版本
-ver local 16.13.0
+ver-dev local 16.13.0
 
 # 为当前项目设置特定 Rust 版本
-ver rust local 1.85.0
+ver-dev rust local 1.85.0
 ```
 
 这将在当前目录创建一个 `.node-version` 或 `.rust-version` 文件。
@@ -151,10 +151,10 @@ ver rust local 1.85.0
 
 ```bash
 # 使用特定 Node.js 版本运行命令
-ver exec 14.17.0 npm install
+ver-dev exec 14.17.0 npm install
 
 # 使用特定 Rust 版本运行命令
-ver rust exec 1.85.0 cargo b
+ver-dev rust exec 1.85.0 cargo b
 ```
 
 ### 迁移
@@ -163,20 +163,20 @@ ver rust exec 1.85.0 cargo b
 
 ```bash
 # 从 nvm 迁移 Node.js 版本
-ver migrate nvm
+ver-dev migrate nvm
 
 # 从 rustup 迁移 Rust 版本
-ver rust migrate rustup
+ver-dev rust migrate rustup
 ```
 
 ### 维护
 
 ```bash
 # 清理缓存和临时文件
-ver clean
+ver-dev clean
 
 # 更新 ver 自身
-ver selfupdate
+ver-dev selfupdate
 ```
 
 ## 彩色终端输出
