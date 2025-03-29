@@ -62,7 +62,7 @@ Download pre-built binaries for your platform from the [Releases](https://github
 
 ```bash
 # View help
-ver --help
+ver-dev --help
 
 # List available Node.js versions
 ver list
