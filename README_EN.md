@@ -65,82 +65,82 @@ Download pre-built binaries for your platform from the [Releases](https://github
 ver-dev --help
 
 # List available Node.js versions
-ver list
-ver list --lts  # Show only LTS versions
+ver-dev list
+ver-dev list --lts  # Show only LTS versions
 
 # Install a specific version
-ver install 18.17.0
+ver-dev install 18.17.0
 
 # Install the latest version or latest LTS version
-ver install latest
-ver install lts
+ver-dev install latest
+ver-dev install lts
 
 # Switch to a version
-ver use 18.17.0
+ver-dev use 18.17.0
 
 # View current version
-ver current
+ver-dev current
 
 # List installed versions
-ver installed
+ver-dev installed
 
 # Remove a specific version
-ver remove 18.17.0
+ver-dev remove 18.17.0
 ```
 
 ### Rust Version Management
 
 ```bash
 # List available Rust versions
-ver rust list
-ver rust list --stable  # Show only stable versions
+ver-dev rust list
+ver-dev rust list --stable  # Show only stable versions
 
 # Install a specific Rust version
-ver rust install 1.85.0
+ver-dev rust install 1.85.0
 
 # Install the latest version
-ver rust install latest
-ver rust install stable  # Install latest stable version
+ver-dev rust install latest
+ver-dev rust install stable  # Install latest stable version
 
 # Switch to a Rust version
-ver rust use 1.85.0
+ver-dev rust use 1.85.0
 
 # View current Rust version
-ver rust current
+ver-dev rust current
 
 # List installed Rust versions
-ver rust installed
+ver-dev rust installed
 
 # Remove a specific Rust version
-ver rust remove 1.85.0
+ver-dev rust remove 1.85.0
 ```
 
 ### Version Aliases
 
 ```bash
 # Create a Node.js alias
-ver alias myproject 18.17.0
+ver-dev alias myproject 18.17.0
 
 # Create a Rust alias
-ver rust alias myproject 1.85.0
+ver-dev rust alias myproject 1.85.0
 
 # Switch using an alias
-ver use myproject
-ver rust use myproject
+ver-dev use myproject
+ver-dev rust use myproject
 
 # List all aliases
-ver aliases
-ver rust aliases
+ver-dev aliases
+ver-dev rust aliases
 ```
 
 ### Project-Specific Versions
 
 ```bash
 # Set a specific Node.js version for the current project
-ver local 16.13.0
+ver-dev local 16.13.0
 
 # Set a specific Rust version for the current project
-ver rust local 1.85.0
+ver-dev rust local 1.85.0
 ```
 
 This creates a `.node-version` or `.rust-version` file in the current directory.
@@ -151,10 +151,10 @@ Run commands with a specific version without switching the global version:
 
 ```bash
 # Run commands with a specific Node.js version
-ver exec 14.17.0 npm install
+ver-dev exec 14.17.0 npm install
 
 # Run commands with a specific Rust version
-ver rust exec 1.85.0 cargo b
+ver-dev rust exec 1.85.0 cargo b
 ```
 
 ### Migration
@@ -163,20 +163,20 @@ Migrate installed versions from other version managers:
 
 ```bash
 # Migrate Node.js versions from nvm
-ver migrate nvm
+ver-dev migrate nvm
 
 # Migrate Rust versions from rustup
-ver rust migrate rustup
+ver-dev rust migrate rustup
 ```
 
 ### Maintenance
 
 ```bash
 # Clean cache and temporary files
-ver clean
+ver-dev clean
 
 # Update ver itself
-ver selfupdate
+ver-dev selfupdate
 ```
 
 ## Colored Terminal Output
