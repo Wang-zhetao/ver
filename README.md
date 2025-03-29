@@ -138,7 +138,7 @@ ver rust local 1.85.0
 ver exec 14.17.0 npm install
 
 # 使用特定 Rust 版本运行命令
-ver rust exec 1.85.0 cargo build
+ver rust exec 1.85.0 cargo b
 ```
 
 ### 迁移
@@ -177,7 +177,20 @@ ver selfupdate
 ### 构建
 
 ```bash
-cargo build --release
+# 使用 Cargo 构建（开发版本）
+cargo b
+
+# 构建发布版本
+cargo b --release
+
+# 运行测试
+cargo t
+
+# 检查代码风格
+cargo fmt
+
+# 代码静态分析
+cargo c
 ```
 
 ## 贡献

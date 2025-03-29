@@ -138,7 +138,7 @@ Run commands with a specific version without switching the global version:
 ver exec 14.17.0 npm install
 
 # Run commands with a specific Rust version
-ver rust exec 1.85.0 cargo build
+ver rust exec 1.85.0 cargo b
 ```
 
 ### Migration
@@ -177,7 +177,20 @@ ver selfupdate
 ### Building
 
 ```bash
-cargo build --release
+# Build with Cargo (development version)
+cargo b
+
+# Build release version
+cargo b --release
+
+# Run tests
+cargo t
+
+# Check code formatting
+cargo fmt
+
+# Static code analysis
+cargo c
 ```
 
 ## Contributing
