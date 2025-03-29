@@ -7,10 +7,10 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     str::FromStr,
 };
-use tokio::process::Command as TokioCommand;
+use std::os::unix::fs::PermissionsExt;
 
 // 支持的操作系统和架构
 #[derive(Debug)]
@@ -28,6 +28,22 @@ enum ArchType {
     X86,
 }
 
+// 版本类型枚举
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VersionType {
+    Node,
+    Rust,
+}
+
+impl std::fmt::Display for VersionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VersionType::Node => write!(f, "Node.js"),
+            VersionType::Rust => write!(f, "Rust"),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeVersion {
     pub version: String,
@@ -35,6 +51,14 @@ pub struct NodeVersion {
     pub lts: bool,
     pub date: String,
     pub files: Vec<String>,
+}
+
+// Rust版本结构体
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RustVersion {
+    pub version: String,
+    pub date: String,
+    pub stable: bool,
 }
 
 // 自定义反序列化函数来处理 lts 字段
@@ -61,22 +85,74 @@ struct Aliases {
     aliases: HashMap<String, String>,
 }
 
+// 自定义错误类型
+#[derive(Debug)]
+pub enum VersionError {
+    NotInstalled(String, VersionType),
+    NotFound(String, VersionType),
+    CurrentlyActive(String, VersionType),
+    IoError(io::Error),
+}
+
+impl std::fmt::Display for VersionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VersionError::NotInstalled(version, version_type) => 
+                write!(f, "{} 版本 {} 未安装", version_type, version),
+            VersionError::NotFound(version, version_type) => 
+                write!(f, "找不到 {} 版本 {}", version_type, version),
+            VersionError::CurrentlyActive(version, version_type) => 
+                write!(f, "无法删除当前活动的 {} 版本 {}。请先切换到其他版本。", version_type, version),
+            VersionError::IoError(err) => 
+                write!(f, "IO错误: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for VersionError {}
+
+impl From<io::Error> for VersionError {
+    fn from(err: io::Error) -> Self {
+        VersionError::IoError(err)
+    }
+}
+
+/// 版本管理器结构体，用于管理不同语言的版本
+///
+/// 支持管理Node.js和Rust版本，提供版本的安装、切换、删除等功能。
 pub struct VersionManager {
+    /// 基础目录，默认为~/.version-manager
     base_dir: PathBuf,
+    /// 存放已安装版本的目录
     versions_dir: PathBuf,
+    /// 别名配置文件路径
     aliases_file: PathBuf,
+    /// 下载缓存目录
     cache_dir: PathBuf,
+    /// 可执行文件目录
     bin_dir: PathBuf,
+    /// 当前使用的版本
     current_version: Option<String>,
+    /// 当前使用的版本类型
+    current_version_type: VersionType,
+    /// 操作系统类型
     os_type: OsType,
+    /// 系统架构类型
     arch_type: ArchType,
 }
 
 impl VersionManager {
+    /// 创建一个新的版本管理器实例
+    ///
+    /// 初始化必要的目录结构，检测系统环境，读取当前版本信息。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回VersionManager实例，失败时返回错误。
     pub fn new() -> Result<Self> {
         let base_dir = dirs::home_dir()
-            .context("Could not find home directory")?
-            .join(".node-version-manager");
+            .context("无法找到用户主目录")?
+            .join(".version-manager");
         
         let versions_dir = base_dir.join("versions");
         let aliases_file = base_dir.join("aliases.json");
@@ -84,14 +160,14 @@ impl VersionManager {
         let bin_dir = base_dir.join("bin");
         
         // Create directories if they don't exist
-        fs::create_dir_all(&base_dir)?;
-        fs::create_dir_all(&versions_dir)?;
-        fs::create_dir_all(&cache_dir)?;
-        fs::create_dir_all(&bin_dir)?;
+        fs::create_dir_all(&base_dir).context("无法创建基础目录")?;
+        fs::create_dir_all(&versions_dir).context("无法创建版本目录")?;
+        fs::create_dir_all(&cache_dir).context("无法创建缓存目录")?;
+        fs::create_dir_all(&bin_dir).context("无法创建bin目录")?;
 
         // Try to read current version from file
-        let current_version = Self::read_current_version(&base_dir).ok();
-
+        let current_version = Self::read_current_version(&base_dir, VersionType::Node).ok();
+        
         // Detect OS and architecture
         let os_type = Self::detect_os()?;
         let arch_type = Self::detect_arch()?;
@@ -103,23 +179,36 @@ impl VersionManager {
             cache_dir,
             bin_dir,
             current_version,
+            current_version_type: VersionType::Node,
             os_type,
             arch_type,
         })
     }
 
-    // 检测操作系统类型
+    /// 检测操作系统类型
+    ///
+    /// 根据系统环境变量OS来检测操作系统类型。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回OsType枚举值，失败时返回错误。
     fn detect_os() -> Result<OsType> {
         let os = env::consts::OS;
         match os {
             "macos" | "darwin" => Ok(OsType::Darwin),
             "linux" => Ok(OsType::Linux),
             "windows" => Ok(OsType::Windows),
-            _ => anyhow::bail!("Unsupported operating system: {}", os),
+            _ => Err(anyhow::anyhow!("不支持的操作系统: {}", os)),
         }
     }
 
-    // 检测架构类型
+    /// 检测架构类型
+    ///
+    /// 根据系统环境变量ARCH来检测架构类型。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回ArchType枚举值，失败时返回错误。
     fn detect_arch() -> Result<ArchType> {
         let arch = env::consts::ARCH;
         match arch {
@@ -127,11 +216,17 @@ impl VersionManager {
             "aarch64" => Ok(ArchType::Arm64),
             "arm" => Ok(ArchType::Arm),
             "x86" => Ok(ArchType::X86),
-            _ => anyhow::bail!("Unsupported architecture: {}", arch),
+            _ => Err(anyhow::anyhow!("不支持的架构: {}", arch)),
         }
     }
 
-    // 获取操作系统和架构对应的下载 URL 后缀
+    /// 获取操作系统和架构对应的下载 URL 后缀
+    ///
+    /// 根据操作系统类型和架构类型生成下载 URL 后缀。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回URL后缀字符串，失败时返回错误。
     fn get_os_arch_suffix(&self) -> String {
         match (&self.os_type, &self.arch_type) {
             (OsType::Darwin, ArchType::X64) => "darwin-x64".to_string(),
@@ -145,7 +240,13 @@ impl VersionManager {
         }
     }
 
-    // 获取可执行文件的扩展名
+    /// 获取可执行文件的扩展名
+    ///
+    /// 根据操作系统类型获取可执行文件的扩展名。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回扩展名字符串，失败时返回错误。
     fn get_exe_extension(&self) -> &str {
         match self.os_type {
             OsType::Windows => ".exe",
@@ -153,73 +254,165 @@ impl VersionManager {
         }
     }
 
-    // Read the current version from a file
-    fn read_current_version(base_dir: &PathBuf) -> Result<String> {
-        let version_file = base_dir.join(".current");
+    /// 读取当前版本从文件
+    ///
+    /// 从指定目录下的.current-node文件读取当前版本信息。
+    ///
+    /// # 参数
+    ///
+    /// * `base_dir` - 基础目录
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回当前版本字符串，失败时返回错误。
+    fn read_current_version(base_dir: &PathBuf, version_type: VersionType) -> Result<String> {
+        let version_file = base_dir.join(format!(".current-{}", version_type));
         if version_file.exists() {
             let version = fs::read_to_string(version_file)?;
             Ok(version.trim().to_string())
         } else {
-            anyhow::bail!("No current version set")
+            Err(anyhow::anyhow!("找不到当前版本文件"))
         }
     }
 
-    // Save the current version to a file
-    fn save_current_version(&self, version: &str) -> Result<()> {
-        let version_file = self.base_dir.join(".current");
+    /// 保存当前版本到文件
+    ///
+    /// 将当前版本信息保存到指定目录下的.current-node文件。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 当前版本字符串
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    fn save_current_version(&self, version: &str, version_type: VersionType) -> Result<()> {
+        let version_file = self.base_dir.join(format!(".current-{}", version_type));
         fs::write(version_file, version)?;
         Ok(())
     }
 
-    // Get the current version
-    pub fn get_current_version(&self) -> Option<&String> {
-        self.current_version.as_ref()
+    /// 获取当前版本
+    ///
+    /// 获取当前使用的版本信息。
+    ///
+    /// # 参数
+    ///
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回当前版本字符串，失败时返回错误。
+    pub fn get_current_version(&self, version_type: VersionType) -> Option<&String> {
+        if self.current_version_type == version_type {
+            self.current_version.as_ref()
+        } else {
+            None
+        }
     }
 
-    // 读取别名配置
-    fn read_aliases(&self) -> Result<Aliases> {
-        if !self.aliases_file.exists() {
+    /// 读取别名配置
+    ///
+    /// 从指定目录下的aliases.json文件读取别名配置信息。
+    ///
+    /// # 参数
+    ///
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回别名配置信息，失败时返回错误。
+    fn read_aliases(&self, version_type: VersionType) -> Result<Aliases> {
+        let aliases_file = self.aliases_file.with_file_name(format!("aliases-{}.json", version_type));
+        if !aliases_file.exists() {
             return Ok(Aliases {
                 aliases: HashMap::new(),
             });
         }
 
-        let content = fs::read_to_string(&self.aliases_file)?;
+        let content = fs::read_to_string(&aliases_file)?;
         let aliases: Aliases = serde_json::from_str(&content)?;
         Ok(aliases)
     }
 
-    // 保存别名配置
-    fn save_aliases(&self, aliases: &Aliases) -> Result<()> {
+    /// 保存别名配置
+    ///
+    /// 将别名配置信息保存到指定目录下的aliases.json文件。
+    ///
+    /// # 参数
+    ///
+    /// * `aliases` - 别名配置信息
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    fn save_aliases(&self, aliases: &Aliases, version_type: VersionType) -> Result<()> {
+        let aliases_file = self.aliases_file.with_file_name(format!("aliases-{}.json", version_type));
         let content = serde_json::to_string_pretty(aliases)?;
-        fs::write(&self.aliases_file, content)?;
+        fs::write(&aliases_file, content)?;
         Ok(())
     }
 
-    // 创建版本别名
-    pub fn create_alias(&self, alias: &str, version: &str) -> Result<()> {
+    /// 创建版本别名
+    ///
+    /// 为指定版本创建一个别名。
+    ///
+    /// # 参数
+    ///
+    /// * `alias` - 别名名称
+    /// * `version` - 版本号
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn create_alias(&self, alias: &str, version: &str, version_type: VersionType) -> Result<()> {
         // 检查版本是否已安装
-        let version_dir = self.versions_dir.join(version);
+        let version_dir = self.get_version_dir(version, version_type);
         if !version_dir.exists() {
-            anyhow::bail!("Version {} is not installed", version);
+            return Err(anyhow::anyhow!("{}", VersionError::NotInstalled(version.to_string(), version_type)));
         }
 
-        let mut aliases = self.read_aliases()?;
+        let mut aliases = self.read_aliases(version_type)?;
         aliases.aliases.insert(alias.to_string(), version.to_string());
-        self.save_aliases(&aliases)?;
+        self.save_aliases(&aliases, version_type)?;
 
         Ok(())
     }
 
-    // 获取别名对应的版本
-    pub fn get_alias(&self, alias: &str) -> Result<Option<String>> {
-        let aliases = self.read_aliases()?;
+    /// 获取别名对应的版本
+    ///
+    /// 获取指定别名对应的版本号。
+    ///
+    /// # 参数
+    ///
+    /// * `alias` - 别名名称
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回版本号字符串，失败时返回错误。
+    pub fn get_alias(&self, alias: &str, version_type: VersionType) -> Result<Option<String>> {
+        let aliases = self.read_aliases(version_type)?;
         Ok(aliases.aliases.get(alias).cloned())
     }
 
-    // 列出所有别名
-    pub fn list_aliases(&self) -> Result<Vec<(String, String)>> {
-        let aliases = self.read_aliases()?;
+    /// 列出所有别名
+    ///
+    /// 列出所有已定义的别名。
+    ///
+    /// # 参数
+    ///
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回别名列表，失败时返回错误。
+    pub fn list_aliases(&self, version_type: VersionType) -> Result<Vec<(String, String)>> {
+        let aliases = self.read_aliases(version_type)?;
         let mut result = Vec::new();
         
         for (alias, version) in aliases.aliases {
@@ -230,50 +423,94 @@ impl VersionManager {
         Ok(result)
     }
 
-    // 设置本地版本
-    pub fn set_local_version(&self, version: &str) -> Result<()> {
+    /// 设置本地版本
+    ///
+    /// 在当前目录下创建一个文件指定使用的版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn set_local_version(&self, version: &str, version_type: VersionType) -> Result<()> {
         // 检查版本是否已安装
-        let version_dir = self.versions_dir.join(version);
+        let version_dir = self.get_version_dir(version, version_type);
         if !version_dir.exists() {
-            anyhow::bail!("Version {} is not installed", version);
+            return Err(anyhow::anyhow!("{}", VersionError::NotInstalled(version.to_string(), version_type)));
         }
 
         let current_dir = env::current_dir()?;
-        let node_version_file = current_dir.join(".node-version");
+        let version_file = match version_type {
+            VersionType::Node => current_dir.join(".node-version"),
+            VersionType::Rust => current_dir.join(".rust-version"),
+        };
         
-        fs::write(node_version_file, version)?;
+        fs::write(version_file, version)?;
         
         Ok(())
     }
 
-    // 获取本地项目要求的版本
-    pub fn get_local_version() -> Result<Option<String>> {
+    /// 获取本地项目要求的版本
+    ///
+    /// 获取当前目录下指定的版本号。
+    ///
+    /// # 参数
+    ///
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回版本号字符串，失败时返回错误。
+    #[allow(dead_code)]  // 标记为允许未使用
+    pub fn get_local_version(version_type: VersionType) -> Result<Option<String>> {
         let current_dir = env::current_dir()?;
-        let node_version_file = current_dir.join(".node-version");
+        let version_file = match version_type {
+            VersionType::Node => current_dir.join(".node-version"),
+            VersionType::Rust => current_dir.join(".rust-version"),
+        };
         
-        if node_version_file.exists() {
-            let version = fs::read_to_string(node_version_file)?;
+        if version_file.exists() {
+            let version = fs::read_to_string(version_file)?;
             Ok(Some(version.trim().to_string()))
         } else {
             Ok(None)
         }
     }
 
-    // 使用指定版本执行命令
-    pub fn exec_with_version(&self, version: &str, command: &str, args: &[String]) -> Result<()> {
+    /// 使用指定版本执行命令
+    ///
+    /// 使用指定版本的环境执行命令。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    /// * `command` - 命令名称
+    /// * `args` - 命令参数
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn exec_with_version(&self, version: &str, command: &str, args: &[String], version_type: VersionType) -> Result<()> {
         // 检查版本是否已安装，如果没有则安装
-        let version_dir = self.versions_dir.join(version);
+        let version_dir = self.get_version_dir(version, version_type);
         if !version_dir.exists() {
             println!("Version {} is not installed. Installing...", version);
             // 创建一个块作用域以避免 `?` 运算符立即返回
             {
                 let rt = tokio::runtime::Runtime::new()?;
-                rt.block_on(self.install_version(version))?;
+                rt.block_on(self.install_version(version, version_type))?;
             }
         }
 
         // 获取对应版本的二进制目录
-        let bin_path = version_dir.join(format!("node-v{}-{}/bin", version, self.get_os_arch_suffix()));
+        let bin_path = match version_type {
+            VersionType::Node => version_dir.join(format!("node-v{}-{}/bin", version, self.get_os_arch_suffix())),
+            VersionType::Rust => version_dir.join("bin"),
+        };
         
         // 将该目录添加到 PATH 环境变量
         let path_var = env::var("PATH").unwrap_or_default();
@@ -286,13 +523,19 @@ impl VersionManager {
             .status()?;
             
         if !status.success() {
-            anyhow::bail!("Command failed with exit code: {}", status);
+            return Err(anyhow::anyhow!("命令执行失败，退出码: {}", status));
         }
         
         Ok(())
     }
 
-    // 清理缓存和临时文件
+    /// 清理缓存和临时文件
+    ///
+    /// 清理下载缓存和临时文件。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
     pub fn clean(&self) -> Result<()> {
         // 清理下载缓存
         if self.cache_dir.exists() {
@@ -318,7 +561,13 @@ impl VersionManager {
         Ok(())
     }
 
-    // 自身更新
+    /// 自身更新
+    ///
+    /// 更新版本管理器自身。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
     pub async fn self_update(&self) -> Result<()> {
         // 这个功能的实现可能需要与特定的发布渠道集成
         // 这里简单地打印一条消息，实际应用中可以替换为真正的更新逻辑
@@ -327,12 +576,23 @@ impl VersionManager {
         Ok(())
     }
 
-    // 从其他版本管理器迁移
-    pub async fn migrate_from(&self, source: &str) -> Result<usize> {
+    /// 从其他版本管理器迁移
+    ///
+    /// 从其他版本管理器迁移已安装的版本。
+    ///
+    /// # 参数
+    ///
+    /// * `source` - 来源版本管理器名称
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回迁移的版本数量，失败时返回错误。
+    pub async fn migrate_from(&self, source: &str, version_type: VersionType) -> Result<usize> {
         let mut migrated_count = 0;
         
-        match source.to_lowercase().as_str() {
-            "nvm" => {
+        match (source.to_lowercase().as_str(), version_type) {
+            ("nvm", VersionType::Node) => {
                 // 尝试找到 NVM 安装目录
                 let nvm_dir = if let Ok(dir) = env::var("NVM_DIR") {
                     PathBuf::from_str(&dir)?
@@ -345,22 +605,22 @@ impl VersionManager {
                 let versions_dir = nvm_dir.join("versions").join("node");
                 
                 if !versions_dir.exists() {
-                    anyhow::bail!("Cannot find NVM versions directory at {}", versions_dir.display());
+                    return Err(anyhow::anyhow!("找不到 NVM 版本目录"));
                 }
                 
                 for entry in fs::read_dir(versions_dir)? {
                     let entry = entry?;
                     if entry.file_type()?.is_dir() {
-                        let version_str = entry.file_name().to_string_lossy();
+                        let version = entry.file_name().to_string_lossy().to_string();
                         // 跳过 "v" 前缀
-                        let version = if version_str.starts_with('v') {
-                            &version_str[1..]
+                        let version = if version.starts_with('v') {
+                            &version[1..]
                         } else {
-                            &version_str
+                            &version
                         };
                         
                         // 检查是否已经安装
-                        let target_dir = self.versions_dir.join(version);
+                        let target_dir = self.get_version_dir(version, version_type);
                         if !target_dir.exists() {
                             println!("Migrating Node.js version {} from NVM...", version);
                             // 复制文件
@@ -371,22 +631,22 @@ impl VersionManager {
                     }
                 }
             },
-            "n" => {
+            ("n", VersionType::Node) => {
                 // 尝试找到 N 安装目录
                 let n_prefix = env::var("N_PREFIX").unwrap_or_else(|_| "/usr/local".to_string());
                 let n_versions_dir = PathBuf::from_str(&n_prefix)?.join("n").join("versions").join("node");
                 
                 if !n_versions_dir.exists() {
-                    anyhow::bail!("Cannot find N versions directory at {}", n_versions_dir.display());
+                    return Err(anyhow::anyhow!("找不到 N 版本目录"));
                 }
                 
                 for entry in fs::read_dir(n_versions_dir)? {
                     let entry = entry?;
                     if entry.file_type()?.is_dir() {
-                        let version = entry.file_name().to_string_lossy();
+                        let version = entry.file_name().to_string_lossy().to_string();
                         
                         // 检查是否已经安装
-                        let target_dir = self.versions_dir.join(&*version);
+                        let target_dir = self.get_version_dir(&version, version_type);
                         if !target_dir.exists() {
                             println!("Migrating Node.js version {} from N...", version);
                             // 复制文件
@@ -397,13 +657,90 @@ impl VersionManager {
                     }
                 }
             },
-            _ => anyhow::bail!("Unsupported source version manager: {}", source),
+            ("rustup", VersionType::Rust) => {
+                // 尝试找到 rustup 安装目录
+                let rustup_home = if let Ok(dir) = env::var("RUSTUP_HOME") {
+                    PathBuf::from_str(&dir)?
+                } else {
+                    dirs::home_dir()
+                        .context("Could not find home directory")?
+                        .join(".rustup")
+                };
+                
+                let toolchains_dir = rustup_home.join("toolchains");
+                
+                if !toolchains_dir.exists() {
+                    return Err(anyhow::anyhow!("找不到 rustup 工具链目录"));
+                }
+                
+                for entry in fs::read_dir(toolchains_dir)? {
+                    let entry = entry?;
+                    if entry.file_type()?.is_dir() {
+                        let toolchain = entry.file_name().to_string_lossy().to_string();
+                        if toolchain.contains("stable") {
+                            // 提取版本号
+                            let version = if let Some(idx) = toolchain.find('-') {
+                                toolchain[..idx].to_string()
+                            } else {
+                                toolchain.to_string()
+                            };
+                            
+                            // 检查是否已经安装
+                            let target_dir = self.get_version_dir(&version, version_type);
+                            if !target_dir.exists() {
+                                println!("Migrating Rust version {} from rustup...", version);
+                                // 复制文件
+                                let source_dir = entry.path();
+                                self.copy_dir_recursively(&source_dir, &target_dir)?;
+                                
+                                // 创建bin目录
+                                let bin_dir = target_dir.join("bin");
+                                fs::create_dir_all(&bin_dir)?;
+                                
+                                // 复制可执行文件
+                                let source_bin_dir = source_dir.join("bin");
+                                if source_bin_dir.exists() {
+                                    for bin_entry in fs::read_dir(&source_bin_dir)? {
+                                        let bin_entry = bin_entry?;
+                                        if bin_entry.file_type()?.is_file() {
+                                            let file_name = bin_entry.file_name();
+                                            let target_bin = bin_dir.join(&file_name);
+                                            fs::copy(bin_entry.path(), &target_bin)?;
+                                            
+                                            // 设置执行权限
+                                            if let OsType::Darwin | OsType::Linux = self.os_type {
+                                                let mut perms = fs::metadata(&target_bin)?.permissions();
+                                                perms.set_mode(0o755); // rwxr-xr-x
+                                                fs::set_permissions(&target_bin, perms)?;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                migrated_count += 1;
+                            }
+                        }
+                    }
+                }
+            },
+            _ => return Err(anyhow::anyhow!("不支持的源版本管理器: {} for {}", source, version_type)),
         }
         
         Ok(migrated_count)
     }
 
-    // 递归复制目录
+    /// 递归复制目录
+    ///
+    /// 递归复制源目录到目标目录。
+    ///
+    /// # 参数
+    ///
+    /// * `src` - 源目录
+    /// * `dst` - 目标目录
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
     fn copy_dir_recursively(&self, src: &Path, dst: &Path) -> Result<()> {
         if !dst.exists() {
             fs::create_dir_all(dst)?;
@@ -428,69 +765,187 @@ impl VersionManager {
         Ok(())
     }
 
-    pub async fn list_available_versions(&self, lts_only: bool) -> Result<Vec<NodeVersion>> {
-        let client = reqwest::Client::new();
-        let response = client
-            .get("https://nodejs.org/dist/index.json")
-            .send()
-            .await?
-            .json::<Vec<NodeVersion>>()
-            .await?;
+    /// 列出可用的版本
+    ///
+    /// 列出可用的版本信息。
+    ///
+    /// # 参数
+    ///
+    /// * `lts_only` - 是否只列出LTS版本
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回版本信息列表，失败时返回错误。
+    pub async fn list_available_versions(&self, lts_only: bool, version_type: VersionType) -> Result<Vec<NodeVersion>> {
+        match version_type {
+            VersionType::Node => {
+                let client = reqwest::Client::new();
+                let response = client
+                    .get("https://nodejs.org/dist/index.json")
+                    .send()
+                    .await?
+                    .json::<Vec<NodeVersion>>()
+                    .await?;
 
-        let mut versions = if lts_only {
-            response.into_iter().filter(|v| v.lts).collect::<Vec<_>>()
-        } else {
-            response
-        };
-        
-        // 按版本号排序（从新到旧）
-        versions.sort_by(|a, b| {
-            let a_parts: Vec<&str> = a.version.split('.').collect();
-            let b_parts: Vec<&str> = b.version.split('.').collect();
-            
-            for i in 0..std::cmp::min(a_parts.len(), b_parts.len()) {
-                let a_num = a_parts[i].parse::<i32>().unwrap_or(0);
-                let b_num = b_parts[i].parse::<i32>().unwrap_or(0);
+                let mut versions = if lts_only {
+                    response.into_iter().filter(|v| v.lts).collect::<Vec<_>>()
+                } else {
+                    response
+                };
                 
-                if a_num != b_num {
-                    return b_num.cmp(&a_num); // 从新到旧排序
-                }
-            }
-            
-            b_parts.len().cmp(&a_parts.len())
-        });
+                // 按版本号排序（从新到旧）
+                versions.sort_by(|a, b| {
+                    let a_parts: Vec<&str> = a.version.split('.').collect();
+                    let b_parts: Vec<&str> = b.version.split('.').collect();
+                    
+                    for i in 0..std::cmp::min(a_parts.len(), b_parts.len()) {
+                        let a_num = a_parts[i].parse::<i32>().unwrap_or(0);
+                        let b_num = b_parts[i].parse::<i32>().unwrap_or(0);
+                        
+                        if a_num != b_num {
+                            return b_num.cmp(&a_num); // 从新到旧排序
+                        }
+                    }
+                    
+                    b_parts.len().cmp(&a_parts.len())
+                });
 
-        Ok(versions)
+                Ok(versions)
+            },
+            VersionType::Rust => {
+                // 获取Rust版本列表
+                let client = reqwest::Client::new();
+                let response = client
+                    .get("https://static.rust-lang.org/dist/channel-rust-stable.toml")
+                    .send()
+                    .await?
+                    .text()
+                    .await?;
+                
+                // 解析Rust版本信息
+                let mut versions = Vec::new();
+                if let Some(version_line) = response.lines().find(|line| line.starts_with("version = ")) {
+                    if let Some(version) = version_line.split('"').nth(1) {
+                        // 创建一个NodeVersion对象以保持API一致性
+                        versions.push(NodeVersion {
+                            version: version.to_string(),
+                            lts: false, // Rust没有LTS概念
+                            date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                            files: vec![], // 不需要文件列表
+                        });
+                    }
+                }
+                
+                // 获取更多历史版本
+                let response = client
+                    .get("https://static.rust-lang.org/dist/index.html")
+                    .send()
+                    .await?
+                    .text()
+                    .await?;
+                
+                // 简单解析HTML获取版本号
+                for line in response.lines() {
+                    if line.contains("rust-") && line.contains(".tar.gz") && !line.contains("nightly") {
+                        if let Some(start) = line.find("rust-") {
+                            if let Some(end) = line[start..].find(".tar.gz") {
+                                let version = &line[start + 5..start + end];
+                                if !versions.iter().any(|v| v.version == version) && !version.contains("beta") {
+                                    versions.push(NodeVersion {
+                                        version: version.to_string(),
+                                        lts: false,
+                                        date: "".to_string(),
+                                        files: vec![],
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 按版本号排序
+                versions.sort_by(|a, b| {
+                    let a_parts: Vec<&str> = a.version.split('.').collect();
+                    let b_parts: Vec<&str> = b.version.split('.').collect();
+                    
+                    for i in 0..std::cmp::min(a_parts.len(), b_parts.len()) {
+                        let a_num = a_parts[i].parse::<i32>().unwrap_or(0);
+                        let b_num = b_parts[i].parse::<i32>().unwrap_or(0);
+                        
+                        if a_num != b_num {
+                            return b_num.cmp(&a_num); // 从新到旧排序
+                        }
+                    }
+                    
+                    b_parts.len().cmp(&a_parts.len())
+                });
+                
+                Ok(versions)
+            }
+        }
     }
 
-    // 安装最新版本
-    pub async fn install_latest(&mut self) -> Result<()> {
-        let versions = self.list_available_versions(false).await?;
+    /// 安装最新版本
+    ///
+    /// 安装最新版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub async fn install_latest(&mut self, version_type: VersionType) -> Result<()> {
+        let versions = self.list_available_versions(false, version_type).await?;
         
         if let Some(latest) = versions.first() {
-            println!("Latest Node.js version: {}", latest.version);
-            self.install_version(&latest.version).await?;
+            println!("Latest {} version: {}", version_type, latest.version);
+            self.install_version(&latest.version, version_type).await?;
             Ok(())
         } else {
-            anyhow::bail!("Failed to find the latest Node.js version")
+            return Err(anyhow::anyhow!("找不到最新的 {} 版本", version_type));
         }
     }
 
-    // 安装最新 LTS 版本
-    pub async fn install_latest_lts(&mut self) -> Result<()> {
-        let versions = self.list_available_versions(true).await?;
+    /// 安装最新的LTS版本
+    ///
+    /// 安装最新的LTS版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub async fn install_latest_lts(&mut self, version_type: VersionType) -> Result<()> {
+        let versions = self.list_available_versions(true, version_type).await?;
         
         if let Some(latest_lts) = versions.first() {
-            println!("Latest LTS Node.js version: {}", latest_lts.version);
-            self.install_version(&latest_lts.version).await?;
+            println!("Latest LTS {} version: {}", version_type, latest_lts.version);
+            self.install_version(&latest_lts.version, version_type).await?;
             Ok(())
         } else {
-            anyhow::bail!("Failed to find the latest LTS Node.js version")
+            return Err(anyhow::anyhow!("找不到最新的 LTS {} 版本", version_type));
         }
     }
 
-    pub async fn install_version(&self, version: &str) -> Result<()> {
-        let version_dir = self.versions_dir.join(version);
+    /// 安装指定版本
+    ///
+    /// 安装指定版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub async fn install_version(&self, version: &str, version_type: VersionType) -> Result<()> {
+        let version_dir = self.get_version_dir(version, version_type);
         if version_dir.exists() {
             println!("Version {} is already installed", version);
             return Ok(());
@@ -500,18 +955,39 @@ impl VersionManager {
         fs::create_dir_all(&version_dir)?;
 
         // Determine appropriate URL based on OS and architecture
-        let os_arch_suffix = self.get_os_arch_suffix();
+        let os_arch_suffix = match version_type {
+            VersionType::Node => self.get_os_arch_suffix(),
+            VersionType::Rust => {
+                match (&self.os_type, &self.arch_type) {
+                    (OsType::Darwin, ArchType::X64) => "x86_64-apple-darwin",
+                    (OsType::Darwin, ArchType::Arm64) => "aarch64-apple-darwin",
+                    (OsType::Linux, ArchType::X64) => "x86_64-unknown-linux-gnu",
+                    (OsType::Linux, ArchType::Arm64) => "aarch64-unknown-linux-gnu",
+                    (OsType::Linux, ArchType::Arm) => "linux-armv7l",
+                    (OsType::Windows, ArchType::X64) => "x86_64-pc-windows-msvc",
+                    (OsType::Windows, ArchType::X86) => "i686-pc-windows-msvc",
+                    _ => "unknown",
+                }.to_string()
+            }
+        };
+        
         let extension = match self.os_type {
             OsType::Windows => ".zip",
             _ => ".tar.gz",
         };
 
-        let url = format!(
-            "https://nodejs.org/dist/v{}/node-v{}-{}{}",
-            version, version, os_arch_suffix, extension
-        );
+        let url = match version_type {
+            VersionType::Node => format!(
+                "https://nodejs.org/dist/v{}/node-v{}-{}{}",
+                version, version, os_arch_suffix, extension
+            ),
+            VersionType::Rust => format!(
+                "https://static.rust-lang.org/dist/rust-{}-{}{}",
+                version, os_arch_suffix, extension
+            ),
+        };
 
-        println!("Downloading Node.js v{} for {}...", version, os_arch_suffix);
+        println!("Downloading {} v{} for {}...", version_type, version, os_arch_suffix);
         
         // Create a progress bar for download
         let client = reqwest::Client::new();
@@ -538,7 +1014,7 @@ impl VersionManager {
             pb.set_position(new);
         }
         
-        pb.finish_with_message(format!("Downloaded Node.js v{}", version));
+        pb.finish_with_message(format!("Downloaded {} v{}", version_type, version));
         
         println!("Extracting...");
         
@@ -569,12 +1045,105 @@ impl VersionManager {
                     }
                 }
             },
-            _ => anyhow::bail!("Unsupported archive format: {}", extension),
+            _ => return Err(anyhow::anyhow!("不支持的压缩文件格式: {}", extension)),
+        }
+        
+        // 特殊处理Rust安装
+        if version_type == VersionType::Rust {
+            // 运行安装脚本
+            let install_script = match self.os_type {
+                OsType::Windows => version_dir.join(format!("rust-{}-{}/install.bat", version, os_arch_suffix)),
+                _ => version_dir.join(format!("rust-{}-{}/install.sh", version, os_arch_suffix)),
+            };
+            
+            if install_script.exists() {
+                println!("Running Rust installation script...");
+                
+                let status = match self.os_type {
+                    OsType::Windows => {
+                        Command::new("cmd")
+                            .arg("/C")
+                            .arg(&install_script)
+                            .arg("--prefix")
+                            .arg(&version_dir)
+                            .arg("--without=rust-docs")
+                            .status()?
+                    },
+                    _ => {
+                        Command::new("sh")
+                            .arg(&install_script)
+                            .arg("--prefix")
+                            .arg(&version_dir)
+                            .arg("--without=rust-docs")
+                            .status()?
+                    }
+                };
+                
+                if !status.success() {
+                    return Err(anyhow::anyhow!("Rust安装脚本执行失败，退出码: {}", status));
+                }
+            } else {
+                println!("No installation script found, trying to set up manually...");
+                // 手动设置bin目录
+                let bin_dir = version_dir.join("bin");
+                fs::create_dir_all(&bin_dir)?;
+                
+                // 查找并移动可执行文件
+                let rust_bin_dir = match self.os_type {
+                    OsType::Windows => version_dir.join(format!("rust-{}-{}/rustc/bin", version, os_arch_suffix)),
+                    _ => version_dir.join(format!("rust-{}-{}/rustc/bin", version, os_arch_suffix)),
+                };
+                
+                if rust_bin_dir.exists() {
+                    for entry in fs::read_dir(&rust_bin_dir)? {
+                        let entry = entry?;
+                        if entry.file_type()?.is_file() {
+                            let file_name = entry.file_name();
+                            let target_bin = bin_dir.join(&file_name);
+                            fs::copy(entry.path(), &target_bin)?;
+                            
+                            // 设置执行权限
+                            if let OsType::Darwin | OsType::Linux = self.os_type {
+                                let mut perms = fs::metadata(&target_bin)?.permissions();
+                                perms.set_mode(0o755); // rwxr-xr-x
+                                fs::set_permissions(&target_bin, perms)?;
+                            }
+                        }
+                    }
+                }
+                
+                // 复制cargo可执行文件
+                let cargo_bin_dir = match self.os_type {
+                    OsType::Windows => version_dir.join(format!("rust-{}-{}/cargo/bin", version, os_arch_suffix)),
+                    _ => version_dir.join(format!("rust-{}-{}/cargo/bin", version, os_arch_suffix)),
+                };
+                
+                if cargo_bin_dir.exists() {
+                    for entry in fs::read_dir(&cargo_bin_dir)? {
+                        let entry = entry?;
+                        if entry.file_type()?.is_file() {
+                            let file_name = entry.file_name();
+                            let target_bin = bin_dir.join(&file_name);
+                            fs::copy(entry.path(), &target_bin)?;
+                            
+                            // 设置执行权限
+                            if let OsType::Darwin | OsType::Linux = self.os_type {
+                                let mut perms = fs::metadata(&target_bin)?.permissions();
+                                perms.set_mode(0o755); // rwxr-xr-x
+                                fs::set_permissions(&target_bin, perms)?;
+                            }
+                        }
+                    }
+                }
+            }
         }
         
         // Set executable permissions for binaries on Unix-like systems
         if let OsType::Darwin | OsType::Linux = self.os_type {
-            let bin_dir = version_dir.join(format!("node-v{}-{}/bin", version, os_arch_suffix));
+            let bin_dir = match version_type {
+                VersionType::Node => version_dir.join(format!("node-v{}-{}/bin", version, os_arch_suffix)),
+                VersionType::Rust => version_dir.join("bin"),
+            };
             if bin_dir.exists() {
                 for entry in fs::read_dir(bin_dir)? {
                     let entry = entry?;
@@ -588,14 +1157,26 @@ impl VersionManager {
             }
         }
 
-        println!("Successfully installed Node.js version {}", version);
+        println!("Successfully installed {} version {}", version_type, version);
         Ok(())
     }
 
-    pub fn use_version(&mut self, version: &str) -> Result<()> {
-        let version_dir = self.versions_dir.join(version);
+    /// 使用指定版本
+    ///
+    /// 切换到指定版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn use_version(&mut self, version: &str, version_type: VersionType) -> Result<()> {
+        let version_dir = self.get_version_dir(version, version_type);
         if !version_dir.exists() {
-            anyhow::bail!("Version {} is not installed", version);
+            return Err(anyhow::anyhow!("{}", VersionError::NotInstalled(version.to_string(), version_type)));
         }
 
         // Update symlinks
@@ -610,45 +1191,85 @@ impl VersionManager {
         }
 
         // Determine the bin directory based on OS and architecture
-        let os_arch_suffix = self.get_os_arch_suffix();
-        let node_bin_dir = version_dir.join(format!("node-v{}-{}/bin", version, os_arch_suffix));
+        let os_arch_suffix = match version_type {
+            VersionType::Node => self.get_os_arch_suffix(),
+            VersionType::Rust => {
+                match (&self.os_type, &self.arch_type) {
+                    (OsType::Darwin, ArchType::X64) => "x86_64-apple-darwin",
+                    (OsType::Darwin, ArchType::Arm64) => "aarch64-apple-darwin",
+                    (OsType::Linux, ArchType::X64) => "x86_64-unknown-linux-gnu",
+                    (OsType::Linux, ArchType::Arm64) => "aarch64-unknown-linux-gnu",
+                    (OsType::Linux, ArchType::Arm) => "linux-armv7l",
+                    (OsType::Windows, ArchType::X64) => "x86_64-pc-windows-msvc",
+                    (OsType::Windows, ArchType::X86) => "i686-pc-windows-msvc",
+                    _ => "unknown",
+                }.to_string()
+            }
+        };
+        
+        let bin_dir = match version_type {
+            VersionType::Node => version_dir.join(format!("node-v{}-{}/bin", version, os_arch_suffix)),
+            VersionType::Rust => version_dir.join("bin"),
+        };
         
         // Create symlinks for all binaries in that directory
-        for entry in fs::read_dir(&node_bin_dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                let file_name = entry.file_name();
-                let target_path = self.bin_dir.join(&file_name);
-                
-                match self.os_type {
-                    OsType::Windows => {
-                        // 在 Windows 上，创建一个 .cmd 文件来启动相应的程序
-                        let cmd_content = format!(
-                            "@echo off\r\n\"%~dp0\\..\\versions\\{}\\node-v{}-{}\\bin\\{}{}\" %*\r\n",
-                            version, version, os_arch_suffix, file_name.to_string_lossy(), self.get_exe_extension()
-                        );
-                        fs::write(target_path.with_extension("cmd"), cmd_content)?;
-                    },
-                    _ => {
-                        // 在 Unix 系统上创建符号链接
-                        std::os::unix::fs::symlink(entry.path(), target_path)?;
+        if bin_dir.exists() {
+            for entry in fs::read_dir(&bin_dir)? {
+                let entry = entry?;
+                if entry.file_type()?.is_file() {
+                    let file_name = entry.file_name();
+                    let target_path = self.bin_dir.join(&file_name);
+                    
+                    match self.os_type {
+                        OsType::Windows => {
+                            // 在 Windows 上，创建一个 .cmd 文件来启动相应的程序
+                            let cmd_content = match version_type {
+                                VersionType::Node => format!(
+                                    "@echo off\r\n\"%~dp0\\..\\versions\\{}\\node-v{}-{}\\bin\\{}{}\" %*\r\n",
+                                    version, version, os_arch_suffix, file_name.to_string_lossy(), self.get_exe_extension()
+                                ),
+                                VersionType::Rust => format!(
+                                    "@echo off\r\n\"%~dp0\\..\\versions\\{}\\bin\\{}{}\" %*\r\n",
+                                    version, file_name.to_string_lossy(), self.get_exe_extension()
+                                ),
+                            };
+                            fs::write(target_path.with_extension("cmd"), cmd_content)?;
+                        },
+                        _ => {
+                            // 在 Unix 系统上创建符号链接
+                            std::os::unix::fs::symlink(entry.path(), target_path)?;
+                        }
                     }
                 }
             }
+        } else {
+            return Err(anyhow::anyhow!("找不到二进制目录"));
         }
 
         // Update PATH in shell config
         self.update_shell_config()?;
 
         // Save and update current version
-        self.save_current_version(version)?;
+        self.save_current_version(version, version_type)?;
         self.current_version = Some(version.to_string());
+        self.current_version_type = version_type;
 
-        println!("Switched to Node.js version {}", version);
+        println!("Switched to {} version {}", version_type, version);
         Ok(())
     }
 
-    pub fn list_installed_versions(&self) -> Result<Vec<String>> {
+    /// 列出已安装的版本
+    ///
+    /// 列出已安装的版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回已安装版本列表，失败时返回错误。
+    pub fn list_installed_versions(&self, _version_type: VersionType) -> Result<Vec<String>> {
         let mut versions = Vec::new();
         for entry in fs::read_dir(&self.versions_dir)? {
             let entry = entry?;
@@ -667,44 +1288,82 @@ impl VersionManager {
         Ok(versions)
     }
 
-    pub fn remove_version(&self, version: &str) -> Result<()> {
+    /// 删除版本
+    ///
+    /// 删除指定版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn remove_version(&self, version: &str, version_type: VersionType) -> Result<()> {
         // Don't allow removing the current version
         if let Some(current) = &self.current_version {
-            if current == version {
-                anyhow::bail!("Cannot remove the currently active version. Switch to another version first.");
+            if current == version && self.current_version_type == version_type {
+                return Err(anyhow::anyhow!("{}", VersionError::CurrentlyActive(version.to_string(), version_type)));
             }
         }
 
-        let version_dir = self.versions_dir.join(version);
+        let version_dir = self.get_version_dir(version, version_type);
         if !version_dir.exists() {
-            anyhow::bail!("Version {} is not installed", version);
+            return Err(anyhow::anyhow!("{}", VersionError::NotFound(version.to_string(), version_type)));
         }
 
-        fs::remove_dir_all(version_dir)?;
-        println!("Successfully removed Node.js version {}", version);
+        fs::remove_dir_all(version_dir).context(format!("删除 {} 版本 {} 失败", version_type, version))?;
+        println!("成功删除 {} 版本 {}", version_type, version);
         Ok(())
     }
 
+    /// 获取版本目录
+    ///
+    /// 获取指定版本的目录。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    /// * `version_type` - 版本类型
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回版本目录，失败时返回错误。
+    fn get_version_dir(&self, version: &str, version_type: VersionType) -> PathBuf {
+        match version_type {
+            VersionType::Node => self.versions_dir.join(version),
+            VersionType::Rust => self.versions_dir.join(version),
+        }
+    }
+
+    /// 更新shell配置
+    ///
+    /// 更新shell配置文件中的PATH环境变量。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
     fn update_shell_config(&self) -> Result<()> {
         let bin_path = self.bin_dir.to_string_lossy();
         
         match self.os_type {
             OsType::Windows => {
                 // 在 Windows 上修改用户环境变量
-                println!("Please add the following directory to your PATH environment variable:");
+                println!("请将以下目录添加到 PATH 环境变量中:");
                 println!("{}", bin_path);
-                println!("You can do this by opening System Properties -> Advanced -> Environment Variables.");
+                println!("可以通过打开系统属性 -> 高级 -> 环境变量来实现。");
             },
             _ => {
                 // 在 Unix 系统上修改 shell 配置文件
                 let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
                 let config_file = if shell.ends_with("zsh") {
                     dirs::home_dir()
-                        .context("Could not find home directory")?
+                        .context("无法找到用户主目录")?
                         .join(".zshrc")
                 } else {
                     dirs::home_dir()
-                        .context("Could not find home directory")?
+                        .context("无法找到用户主目录")?
                         .join(".bashrc")
                 };
 
@@ -723,4 +1382,194 @@ impl VersionManager {
 
         Ok(())
     }
-} 
+
+    /// 获取当前Rust版本
+    ///
+    /// 获取当前使用的Rust版本。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回当前Rust版本字符串，失败时返回错误。
+    pub fn get_current_rust_version(&self) -> Option<&String> {
+        if self.current_version_type == VersionType::Rust {
+            self.current_version.as_ref()
+        } else {
+            None
+        }
+    }
+    
+    /// 列出可用的Rust版本
+    ///
+    /// 列出可用的Rust版本。
+    ///
+    /// # 参数
+    ///
+    /// * `stable_only` - 是否只列出稳定版本
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Rust版本列表，失败时返回错误。
+    pub async fn list_available_rust_versions(&self, stable_only: bool) -> Result<Vec<String>> {
+        let versions = self.list_available_versions(stable_only, VersionType::Rust).await?;
+        let mut result = Vec::new();
+        
+        for version in versions {
+            result.push(version.version);
+        }
+        
+        Ok(result)
+    }
+    
+    /// 安装Rust版本
+    ///
+    /// 安装指定的Rust版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub async fn install_rust_version(&self, version: &str) -> Result<()> {
+        if version == "latest" {
+            println!("安装最新的 Rust 版本...");
+            let versions = self.list_available_rust_versions(true).await?;
+            if let Some(latest) = versions.first() {
+                self.install_version(latest, VersionType::Rust).await?;
+            } else {
+                return Err(anyhow::anyhow!("找不到最新的 Rust 版本"));
+            }
+        } else {
+            self.install_version(version, VersionType::Rust).await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// 使用指定的Rust版本
+    ///
+    /// 切换到指定的Rust版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn use_rust_version(&mut self, version: &str) -> Result<()> {
+        self.use_version(version, VersionType::Rust)
+    }
+    
+    /// 列出已安装的Rust版本
+    ///
+    /// 列出已安装的Rust版本。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回已安装Rust版本列表，失败时返回错误。
+    pub fn list_installed_rust_versions(&self) -> Result<Vec<String>> {
+        self.list_installed_versions(VersionType::Rust)
+    }
+    
+    /// 删除Rust版本
+    ///
+    /// 删除指定的Rust版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn remove_rust_version(&self, version: &str) -> Result<()> {
+        self.remove_version(version, VersionType::Rust)
+    }
+    
+    /// 创建Rust版本别名
+    ///
+    /// 为指定的Rust版本创建一个别名。
+    ///
+    /// # 参数
+    ///
+    /// * `alias` - 别名名称
+    /// * `version` - 版本号
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn create_rust_alias(&self, alias: &str, version: &str) -> Result<()> {
+        self.create_alias(alias, version, VersionType::Rust)
+    }
+    
+    /// 获取Rust别名对应的版本
+    ///
+    /// 获取指定Rust别名对应的版本。
+    ///
+    /// # 参数
+    ///
+    /// * `alias` - 别名名称
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Rust版本字符串，失败时返回错误。
+    pub fn get_rust_alias(&self, alias: &str) -> Result<Option<String>> {
+        self.get_alias(alias, VersionType::Rust)
+    }
+    
+    /// 列出所有Rust别名
+    ///
+    /// 列出所有已定义的Rust别名。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Rust别名列表，失败时返回错误。
+    pub fn list_rust_aliases(&self) -> Result<Vec<(String, String)>> {
+        self.list_aliases(VersionType::Rust)
+    }
+    
+    /// 设置本地Rust版本
+    ///
+    /// 在当前目录下创建一个文件指定使用的Rust版本。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn set_local_rust_version(&self, version: &str) -> Result<()> {
+        self.set_local_version(version, VersionType::Rust)
+    }
+    
+    /// 使用指定Rust版本执行命令
+    ///
+    /// 使用指定的Rust版本执行命令。
+    ///
+    /// # 参数
+    ///
+    /// * `version` - 版本号
+    /// * `command` - 命令名称
+    /// * `args` - 命令参数
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回Ok(()，失败时返回错误。
+    pub fn exec_with_rust_version(&self, version: &str, command: &str, args: &[String]) -> Result<()> {
+        self.exec_with_version(version, command, args, VersionType::Rust)
+    }
+    
+    /// 从rustup迁移
+    ///
+    /// 从rustup迁移已安装的Rust版本。
+    ///
+    /// # 返回
+    ///
+    /// 成功时返回迁移的版本数量，失败时返回错误。
+    pub async fn migrate_from_rustup(&self) -> Result<usize> {
+        self.migrate_from("rustup", VersionType::Rust).await
+    }
+}
