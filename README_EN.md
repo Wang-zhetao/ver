@@ -1,6 +1,6 @@
-# Ver - High-Performance Node.js Version Manager
+# Ver - High-Performance Version Manager
 
-`ver` is a fast, cross-platform Node.js version manager written in Rust that helps you easily manage multiple Node.js versions.
+`ver` is a fast, cross-platform version manager written in Rust that helps you easily manage multiple Node.js and Rust versions.
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -8,13 +8,14 @@
 ## Features
 
 - 🚀 **High Performance** - Written in Rust for blazing-fast speed
-- 🔄 **Easy Switching** - Seamlessly switch between Node.js versions
+- 🔄 **Easy Switching** - Seamlessly switch between versions
 - 🌐 **Cross-Platform** - Works on macOS, Linux, and Windows
 - 🏗️ **Multi-Architecture** - Supports x64, arm64, and more
 - 🏷️ **Version Aliases** - Create memorable aliases for versions
-- 📁 **Project-Specific Versions** - Set different Node.js versions for different projects
-- 📦 **One-Click Migration** - Migrate from other version managers (nvm, n)
+- 📁 **Project-Specific Versions** - Set different versions for different projects
+- 📦 **One-Click Migration** - Migrate from other version managers (nvm, rustup)
 - 🔍 **Smart Environment Management** - Automatically handles environment variables and path settings
+- 🦀 **Multi-Language Support** - Manages both Node.js and Rust versions
 
 ## Installation
 
@@ -41,7 +42,7 @@ Download pre-built binaries for your platform from the [Releases](https://github
 
 ## Usage
 
-### Basic Commands
+### Node.js Version Management
 
 ```bash
 # View help
@@ -71,34 +72,73 @@ ver installed
 ver remove 18.17.0
 ```
 
+### Rust Version Management
+
+```bash
+# List available Rust versions
+ver rust list
+ver rust list --stable  # Show only stable versions
+
+# Install a specific Rust version
+ver rust install 1.85.0
+
+# Install the latest version
+ver rust install latest
+ver rust install stable  # Install latest stable version
+
+# Switch to a Rust version
+ver rust use 1.85.0
+
+# View current Rust version
+ver rust current
+
+# List installed Rust versions
+ver rust installed
+
+# Remove a specific Rust version
+ver rust remove 1.85.0
+```
+
 ### Version Aliases
 
 ```bash
-# Create an alias
+# Create a Node.js alias
 ver alias myproject 18.17.0
+
+# Create a Rust alias
+ver rust alias myproject 1.85.0
 
 # Switch using an alias
 ver use myproject
+ver rust use myproject
 
 # List all aliases
 ver aliases
+ver rust aliases
 ```
 
 ### Project-Specific Versions
 
 ```bash
-# Set a specific version for the current project
+# Set a specific Node.js version for the current project
 ver local 16.13.0
+
+# Set a specific Rust version for the current project
+ver rust local 1.85.0
 ```
 
-This creates a `.node-version` file in the current directory.
+This creates a `.node-version` or `.rust-version` file in the current directory.
 
 ### Execute Commands
 
 Run commands with a specific version without switching the global version:
 
 ```bash
+# Run commands with a specific Node.js version
 ver exec 14.17.0 npm install
+
+# Run commands with a specific Rust version
+ver rust exec 1.85.0 cargo build
 ```
 
 ### Migration
@@ -106,8 +146,11 @@ ver exec 14.17.0 npm install
 Migrate installed versions from other version managers:
 
 ```bash
+# Migrate Node.js versions from nvm
 ver migrate nvm
-ver migrate n
+
+# Migrate Rust versions from rustup
+ver rust migrate rustup
 ```
 
 ### Maintenance
