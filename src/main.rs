@@ -360,48 +360,73 @@ async fn main() -> Result<()> {
                     if versions.is_empty() {
                         println!("No Rust versions available");
                     } else {
-                        println!("Available Rust Versions:");
+                        println!("{}", "Available Rust Versions:".yellow().bold());
                         for version in versions {
-                            println!("{}", version);
+                            // 检查版本是否为稳定版
+                            let is_stable = version.contains("stable") || version.contains("Stable");
+                            let version_str = if is_stable {
+                                format!("{} (Stable)", version).yellow()
+                            } else {
+                                version.yellow()
+                            };
+                            println!("{}", version_str);
                         }
                     }
                 }
                 RustCommands::Install { version } => {
+                    println!("Installing Rust version {}...", version.yellow().bold());
                     manager.install_rust_version(&version).await?;
                 }
                 RustCommands::Use { version } => {
                     // Check if version is an alias
                     if let Some(aliased_version) = manager.get_rust_alias(&version)? {
-                        println!("Using alias '{}' -> Rust version {}", version, aliased_version);
+                        println!("Using alias '{}' -> {} version {}", 
+                            version, 
+                            "Rust".yellow().bold(), 
+                            aliased_version.yellow());
                         manager.use_rust_version(&aliased_version)?;
                     } else {
+                        println!("Switching to {} version {}...", 
+                            "Rust".yellow().bold(), 
+                            version.yellow());
                         manager.use_rust_version(&version)?;
                     }
                 }
                 RustCommands::Installed => {
                     let versions = manager.list_installed_rust_versions()?;
                     if versions.is_empty() {
-                        println!("No Rust versions installed");
+                        println!("No {} versions installed", "Rust".yellow());
                     } else {
-                        println!("Installed Rust Versions:");
+                        println!("{}", "Installed Rust Versions:".yellow().bold());
                         for version in versions {
-                            println!("{}", version);
+                            let is_current = version.contains("(current)");
+                            let version_str = if is_current {
+                                version.yellow().bold()
+                            } else {
+                                version.yellow()
+                            };
+                            println!("{}", version_str);
                         }
                     }
                 }
                 RustCommands::Remove { version } => {
+                    println!("Removing {} version {}...", 
+                        "Rust".yellow().bold(), 
+                        version.yellow());
                     manager.remove_rust_version(&version)?;
                 }
                 RustCommands::Current => {
                     if let Some(version) = manager.get_current_rust_version() {
-                        println!("Current Rust version: {}", version);
+                        println!("Current {} version: {}", 
+                            "Rust".yellow().bold(), 
+                            version.yellow());
                     } else {
-                        println!("No active Rust version");
+                        println!("No active {} version", "Rust".yellow());
                     }
                 }
                 RustCommands::Alias { name, version } => {
                     manager.create_rust_alias(&name, &version)?;
-                    println!("Created alias '{}' -> Rust version {}", name, version);
+                    println!("Created alias '{}' -> {} version {}", name, "Rust".yellow().bold(), version);
                 }
                 RustCommands::Aliases => {
                     let aliases = manager.list_rust_aliases()?;
